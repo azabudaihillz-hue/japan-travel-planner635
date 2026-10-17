@@ -98,9 +98,6 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
 
-    // ---------------------------------------------------------
-    // 1. 일본 & 한국 주요 여행지 추천 프리셋 (원클릭 추가용)
-    // ---------------------------------------------------------
     const PRESET_PLACES = [
       { name: "간사이 국제공항", category: "✈️ 공항·교통", lat: 34.4320, lng: 135.2304, address: "오사카 이즈미사노시" },
       { name: "오사카 도톤보리 (글리코상)", category: "📸 명소·먹거리", lat: 34.6687, lng: 135.5013, address: "오사카 주오구 도톤보리" },
@@ -115,7 +112,6 @@
       { name: "후쿠오카 캐널시티 하카타", category: "🛍️ 복합쇼핑몰", lat: 33.5898, lng: 130.4108, address: "후쿠오카 하카타구 스미요시" }
     ];
 
-    // 처음 실행 시 보여줄 기본 샘플 데이터 (일본 오사카 알짜배기 코스 예시)
     const DEFAULT_SAMPLE_PINS = [
       {
         id: "pin-101",
@@ -125,11 +121,9 @@
         lat: 34.6687,
         lng: 135.5013,
         completed: false,
-        memo: "에비스바시 다리 위에서 글리코상 포즈로 인증샷 찍기! 저녁에 네온사인 켜지면 더 예쁨.",
+        memo: "에비스바시 다리 위에서 글리코상 포즈로 인증샷 찍기!",
         customTransitMinutes: null,
-        items: [
-          { id: "it-1", title: "타코야키 8알 간식", price: 8500, yen: 950, bought: false }
-        ]
+        items: [{ id: "it-1", title: "타코야키 8알 간식", price: 8500, yen: 950, bought: false }]
       },
       {
         id: "pin-102",
@@ -139,11 +133,9 @@
         lat: 34.6691,
         lng: 135.5031,
         completed: false,
-        memo: "웨이팅 있을 수 있으니 식권 자판기에서 반숙 계란 + 차슈 추가 꼭 누르기!",
+        memo: "반숙 계란 + 차슈 추가 필수!",
         customTransitMinutes: null,
-        items: [
-          { id: "it-2", title: "돈코츠 라멘 2인 + 반숙란", price: 25000, yen: 2780, bought: false }
-        ]
+        items: [{ id: "it-2", title: "돈코츠 라멘 2인 + 반숙란", price: 25000, yen: 2780, bought: false }]
       },
       {
         id: "pin-103",
@@ -153,12 +145,9 @@
         lat: 34.6690,
         lng: 135.5022,
         completed: false,
-        memo: "5,500엔 이상 구매 시 면세(Tax Free) 가능! 여권 꼭 챙기기.",
+        memo: "5,500엔 이상 면세(Tax Free) 혜택 챙기기.",
         customTransitMinutes: null,
-        items: [
-          { id: "it-3", title: "동전파스 · 샤론파스 · 휴족시간", price: 32000, yen: 3550, bought: false },
-          { id: "it-4", title: "곤약젤리 & 인절미 과자 선물용", price: 23000, yen: 2550, bought: false }
-        ]
+        items: [{ id: "it-3", title: "동전파스 · 휴족시간", price: 32000, yen: 3550, bought: false }]
       },
       {
         id: "pin-104",
@@ -168,17 +157,12 @@
         lat: 34.7055,
         lng: 135.4896,
         completed: false,
-        memo: "난바역에서 미도스지선 타고 우메다역 이동! 일몰 30분 전에 올라가면 노을+야경 둘 다 관람 가능.",
+        memo: "일몰 30분 전 방문해서 노을과 야경 관람.",
         customTransitMinutes: 25,
-        items: [
-          { id: "it-5", title: "공중정원 전망대 입장권 (2인)", price: 36000, yen: 4000, bought: false }
-        ]
+        items: [{ id: "it-5", title: "공중정원 전망대 입장권 (2인)", price: 36000, yen: 4000, bought: false }]
       }
     ];
 
-    // ---------------------------------------------------------
-    // 2. 거리 및 대중교통 소요 시간 계산 함수 (0분 버그 완벽 수정)
-    // ---------------------------------------------------------
     function getDistanceKm(lat1, lon1, lat2, lon2) {
       const R = 6371;
       const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -207,7 +191,6 @@
       if (!pinA || !pinB) return null;
       const distKm = getDistanceKm(pinA.lat, pinA.lng, pinB.lat, pinB.lng);
 
-      // 사용자가 직접 입력한 이동 시간(분)이 있으면 최우선 반영
       if (pinB.customTransitMinutes && Number(pinB.customTransitMinutes) > 0) {
         const customM = Number(pinB.customTransitMinutes);
         return {
@@ -222,21 +205,17 @@
       let mode = "";
 
       if (distKm < 0.7) {
-        // 700m 이내는 도보 이동 (시속 4km + 신호 대기 2분)
         totalMinutes = Math.max(3, Math.round((distKm / 4.0) * 60) + 2);
         mode = "🚶 도보 이동";
       } else if (distKm < 15) {
-        // 시내 지하철/전철/버스 구간 (환승·도보 대기 8분 + 표정속도 22km/h)
         const transitDist = distKm * 1.3;
         totalMinutes = Math.round((transitDist / 22) * 60 + 8);
         mode = "🚇 지하철 · 시내버스";
       } else if (distKm < 65) {
-        // 공항철도 / 급행전철 / 광역버스 구간
         const transitDist = distKm * 1.25;
         totalMinutes = Math.round((transitDist / 42) * 60 + 14);
         mode = "🚆 급행전철 · 공항버스";
       } else {
-        // 신칸센 / KTX / 특급열차 구간
         totalMinutes = Math.round((distKm / 120) * 60 + 25);
         mode = "🚄 신칸센 · 특급열차";
       }
@@ -257,51 +236,42 @@
       return "¥" + Math.round(Number(num || 0)).toLocaleString("ja-JP");
     }
 
-    // ---------------------------------------------------------
-    // 3. 메인 앱 컴포넌트
-    // ---------------------------------------------------------
     function App() {
-      // 버전 v2 키를 사용하여 기존 캐시('설레는 군산...')를 깨끗이 무시하고 '여행 계획'으로 시작
       const [pins, setPins] = useState(() => {
-        const saved = localStorage.getItem("travel_planner_pins_v2");
+        const saved = localStorage.getItem("travel_planner_pins_v3");
         return saved ? JSON.parse(saved) : DEFAULT_SAMPLE_PINS;
       });
       const [tripTitle, setTripTitle] = useState(() => {
-        return localStorage.getItem("travel_planner_title_v2") || "여행 계획";
+        return localStorage.getItem("travel_planner_title_v3") || "여행 계획";
       });
       const [exchangeRate, setExchangeRate] = useState(() => {
-        return Number(localStorage.getItem("travel_planner_rate_v2")) || 9.05; // 1엔당 약 9.05원 기본값
+        return Number(localStorage.getItem("travel_planner_rate_v3")) || 9.05;
       });
       const [peopleCount, setPeopleCount] = useState(2);
-      const [activeTab, setActiveTab] = useState("itinerary"); // 'itinerary' | 'budget'
+      const [activeTab, setActiveTab] = useState("itinerary");
       const [selectedPinId, setSelectedPinId] = useState(() => {
-        const saved = localStorage.getItem("travel_planner_pins_v2");
+        const saved = localStorage.getItem("travel_planner_pins_v3");
         const parsed = saved ? JSON.parse(saved) : DEFAULT_SAMPLE_PINS;
         return parsed[0]?.id || null;
       });
 
-      // 장소 실시간 검색 & 추가 모달 상태
       const [showAddModal, setShowAddModal] = useState(false);
       const [searchKeyword, setSearchKeyword] = useState("");
       const [searchResults, setSearchResults] = useState([]);
       const [isSearching, setIsSearching] = useState(false);
       const [customCategory, setCustomCategory] = useState("📸 명소·포토존");
 
-      // 초기화 모달 상태
       const [showResetModal, setShowResetModal] = useState(false);
 
-      // 쇼핑/지출 아이템 입력 상태 (원화 또는 엔화 입력 지원)
       const [newItemTitle, setNewItemTitle] = useState("");
       const [newItemAmount, setNewItemAmount] = useState("");
-      const [inputCurrency, setInputCurrency] = useState("JPY"); // 'KRW' | 'JPY'
+      const [inputCurrency, setInputCurrency] = useState("JPY");
 
-      // 이동 애니메이션 상태 + 이동 완료 후에도 사라지지 않는 [고정 구간 요약 정보]
       const [animatingInfo, setAnimatingInfo] = useState(null);
-      const [lastCompletedSegment, setLastCompletedSegment] = useState(null); // { fromPin, toPin, transit }
+      const [lastCompletedSegment, setLastCompletedSegment] = useState(null);
       const [isJourneyPlaying, setIsJourneyPlaying] = useState(false);
       const [toastMsg, setToastMsg] = useState(null);
 
-      // 지도 Ref
       const mapContainerRef = useRef(null);
       const mapInstanceRef = useRef(null);
       const markersRef = useRef([]);
@@ -315,20 +285,18 @@
         setTimeout(() => setToastMsg(null), 3500);
       };
 
-      // LocalStorage 자동 저장
       useEffect(() => {
-        localStorage.setItem("travel_planner_pins_v2", JSON.stringify(pins));
+        localStorage.setItem("travel_planner_pins_v3", JSON.stringify(pins));
       }, [pins]);
 
       useEffect(() => {
-        localStorage.setItem("travel_planner_title_v2", tripTitle);
+        localStorage.setItem("travel_planner_title_v3", tripTitle);
       }, [tripTitle]);
 
       useEffect(() => {
-        localStorage.setItem("travel_planner_rate_v2", String(exchangeRate));
+        localStorage.setItem("travel_planner_rate_v3", String(exchangeRate));
       }, [exchangeRate]);
 
-      // 현재 선택된 핀 및 인덱스
       const selectedPinIndex = useMemo(
         () => pins.findIndex((p) => p.id === selectedPinId),
         [pins, selectedPinId]
@@ -338,7 +306,6 @@
         [pins, selectedPinIndex]
       );
 
-      // 선택된 핀 기준 [이전 핀 -> 현재 핀] 및 [현재 핀 -> 다음 핀] 소요 시간 계산
       const prevTransitInfo = useMemo(() => {
         const idx = pins.findIndex((p) => p.id === selectedPin?.id);
         if (idx > 0) {
@@ -363,7 +330,6 @@
         return null;
       }, [pins, selectedPin]);
 
-      // 전체 예산 및 총 이동시간 계산 (0분 버그 완벽 해결)
       const budgetStats = useMemo(() => {
         let totalPlannedKRW = 0;
         let totalBoughtKRW = 0;
@@ -398,9 +364,6 @@
         };
       }, [pins, peopleCount, exchangeRate]);
 
-      // ---------------------------------------------------------
-      // 4. 지도 초기화 (API 키 없이 100% 선명하게 나오는 Google Maps 표준 타일 적용!)
-      // ---------------------------------------------------------
       useEffect(() => {
         if (!mapContainerRef.current || mapInstanceRef.current) return;
 
@@ -410,7 +373,6 @@
           attributionControl: false
         }).setView(initCenter, 14);
 
-        // API KEY REQUIRED가 절대 뜨지 않는 Google Maps 한글/현지어 표준 타일
         L.tileLayer("https://mt1.google.com/vt/lyrs=m&hl=ko&x={x}&y={y}&z={z}", {
           maxZoom: 20
         }).addTo(map);
@@ -419,7 +381,6 @@
         mapInstanceRef.current = map;
       }, []);
 
-      // 지도 위 잔상(분홍색 선, 이동 아이콘) 완벽 정리 함수
       const clearActiveAnimationLayers = () => {
         const map = mapInstanceRef.current;
         if (!map) return;
@@ -434,12 +395,10 @@
         }
       };
 
-      // 핀 목록이 바뀔 때마다 마커 + 구간별 소요시간 배지(영구 표시) 렌더링
       useEffect(() => {
         const map = mapInstanceRef.current;
         if (!map) return;
 
-        // 기존 마커 및 경로선 모두 깨끗이 제거
         markersRef.current.forEach((m) => map.removeLayer(m));
         markersRef.current = [];
         polylinesRef.current.forEach((l) => map.removeLayer(l));
@@ -450,7 +409,6 @@
           return;
         }
 
-        // 1) 각 구간별 경로선과 [🚌 소요시간] 말풍선 배지를 지도 위에 영구 표시!
         for (let i = 0; i < pins.length - 1; i++) {
           const pinA = pins[i];
           const pinB = pins[i + 1];
@@ -469,7 +427,6 @@
             }
           ).addTo(map);
 
-          // 선 한가운데에 항상 대중교통 예상 이동 시간이 떠 있도록 영구 Tooltip 부착
           if (transit) {
             segmentLine.bindTooltip(`🚌 ${i + 1}→${i + 2}: ${transit.formatted}`, {
               permanent: true,
@@ -481,7 +438,6 @@
           polylinesRef.current.push(segmentLine);
         }
 
-        // 2) 각 핀포인트 마커 생성
         pins.forEach((pin, idx) => {
           const isSelected = pin.id === selectedPin?.id;
 
@@ -535,9 +491,6 @@
         });
       }, [pins, selectedPin]);
 
-      // ---------------------------------------------------------
-      // 5. A -> B 이동 애니메이션 (끝난 후에도 소요 시간이 사라지지 않도록 고정!)
-      // ---------------------------------------------------------
       const animateBetweenPins = (fromPin, toPin, onComplete) => {
         const map = mapInstanceRef.current;
         if (!map || !fromPin || !toPin) {
@@ -554,7 +507,6 @@
           transit,
           progress: 0
         });
-        // 애니메이션이 끝나도 화면에 계속 남아있을 구간 정보 저장!
         setLastCompletedSegment({
           fromPin,
           toPin,
@@ -634,7 +586,6 @@
         animFrameRef.current = requestAnimationFrame(step);
       };
 
-      // [✅ OK] 버튼 클릭 시 완료 처리 후 다음 핀으로 이동
       const handleCompleteAndMoveNext = (pinId) => {
         const currentIndex = pins.findIndex((p) => p.id === pinId);
         if (currentIndex === -1) return;
@@ -657,17 +608,16 @@
         }
       };
 
-      // 전체 경로 연속 재생
       const handlePlayFullJourney = () => {
         if (pins.length < 2 || isJourneyPlaying) return;
         setIsJourneyPlaying(true);
-        showToast("🎬 1번 핀부터 마지막 핀까지 전체 이동 경로를 재생합니다!");
+        showToast("🎬 전체 이동 경로 프리뷰를 재생합니다!");
 
         let idx = 0;
         const playNext = () => {
           if (idx >= pins.length - 1) {
             setIsJourneyPlaying(false);
-            showToast("✨ 전체 여행 코스 프리뷰가 완료되었습니다.");
+            showToast("✨ 전체 코스 시뮬레이션이 완료되었습니다.");
             return;
           }
           animateBetweenPins(pins[idx], pins[idx + 1], () => {
@@ -678,9 +628,6 @@
         playNext();
       };
 
-      // ---------------------------------------------------------
-      // 6. 실제 전 세계 장소 검색 (OpenStreetMap Nominatim API 연동)
-      // ---------------------------------------------------------
       const handleRealPlaceSearch = async (e) => {
         e.preventDefault();
         if (!searchKeyword.trim()) return;
@@ -695,7 +642,7 @@
           const data = await res.json();
           setSearchResults(data || []);
           if (!data || data.length === 0) {
-            showToast("⚠️ 검색 결과가 없습니다. 더 간단한 키워드(예: 도톤보리, 시부야역)로 검색해보세요.");
+            showToast("⚠️ 검색 결과가 없습니다.");
           }
         } catch (err) {
           showToast("⚠️ 검색 중 오류가 발생했습니다.");
@@ -727,12 +674,9 @@
         if (mapInstanceRef.current) {
           mapInstanceRef.current.flyTo([newPin.lat, newPin.lng], 15, { duration: 1.0 });
         }
-        showToast(`📍 '${newPin.name}' 핀이 정확한 위치에 추가되었습니다!`);
+        showToast(`📍 '${newPin.name}' 핀이 추가되었습니다!`);
       };
 
-      // ---------------------------------------------------------
-      // 7. 초기화 기능 3종 (완료 상태만 리셋 / 전체 백지화 / 샘플 복구)
-      // ---------------------------------------------------------
       const handleResetCompletedOnly = () => {
         clearActiveAnimationLayers();
         setAnimatingInfo(null);
@@ -740,7 +684,7 @@
         setPins((prev) => prev.map((p) => ({ ...p, completed: false })));
         if (pins.length > 0) setSelectedPinId(pins[0].id);
         setShowResetModal(false);
-        showToast("🔄 모든 장소의 [방문 완료(OK)] 상태가 초기화되었습니다!");
+        showToast("🔄 방문 완료(OK) 상태가 초기화되었습니다!");
       };
 
       const handleClearAllPins = () => {
@@ -750,7 +694,7 @@
         setPins([]);
         setSelectedPinId(null);
         setShowResetModal(false);
-        showToast("🗑️ 모든 핀이 삭제되어 새 백지 상태로 초기화되었습니다.");
+        showToast("🗑️ 모든 핀이 삭제되었습니다.");
       };
 
       const handleRestoreSample = () => {
@@ -771,7 +715,6 @@
         showToast("✨ 기본 샘플 코스가 복구되었습니다!");
       };
 
-      // 핀 삭제 / 순서 이동 / 메모 / 지출 품목 관리
       const handleDeletePin = (id) => {
         clearActiveAnimationLayers();
         setPins((prev) => {
@@ -781,7 +724,7 @@
           }
           return next;
         });
-        showToast("🗑️ 선택한 장소가 삭제되었습니다.");
+        showToast("🗑️ 장소가 삭제되었습니다.");
       };
 
       const handleMovePinOrder = (index, direction) => {
@@ -799,7 +742,6 @@
         if (!selectedPin || !newItemTitle.trim()) return;
         const rawAmount = parseFloat(String(newItemAmount).replace(/[^0-9.]/g, "")) || 0;
 
-        // 엔화(JPY)로 입력했으면 환율을 곱해 원화(KRW)도 자동 저장!
         const priceKRW =
           inputCurrency === "JPY" ? Math.round(rawAmount * exchangeRate) : Math.round(rawAmount);
         const priceJPY =
@@ -831,17 +773,14 @@
 
       return (
         <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
-          {/* 상단 알림 토스트 */}
           {toastMsg && (
             <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-indigo-600 text-white px-5 py-3 rounded-2xl shadow-2xl border border-indigo-400/50 font-bold text-xs sm:text-sm">
               {toastMsg}
             </div>
           )}
 
-          {/* 상단 헤더 */}
           <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-xl sticky top-0 z-40 px-4 lg:px-8 py-3">
             <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
-              {/* 좌측 로고 & 제목 ('여행 계획') */}
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg font-black text-lg">
                   ✈️
@@ -853,7 +792,6 @@
                       value={tripTitle}
                       onChange={(e) => setTripTitle(e.target.value)}
                       className="bg-slate-800/60 hover:bg-slate-800 border border-slate-700/80 font-extrabold text-base sm:text-lg text-white focus:outline-none focus:border-indigo-500 rounded-xl px-3 py-1"
-                      title="클릭해서 여행 제목을 자유롭게 수정하세요"
                     />
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5">
@@ -862,7 +800,6 @@
                 </div>
               </div>
 
-              {/* 중앙 요약 보드 */}
               <div className="flex items-center gap-4 sm:gap-6 bg-slate-800/80 border border-slate-700 px-4 py-2 rounded-2xl text-xs">
                 <div>
                   <span className="text-[10px] text-slate-400 block">총 핀포인트</span>
@@ -886,15 +823,12 @@
                 </div>
               </div>
 
-              {/* 우측 탭 & [🔄 초기화] 버튼 */}
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="bg-slate-800 p-1 rounded-xl flex items-center border border-slate-700">
                   <button
                     onClick={() => setActiveTab("itinerary")}
                     className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition ${
-                      activeTab === "itinerary"
-                        ? "bg-indigo-600 text-white"
-                        : "text-slate-400 hover:text-white"
+                      activeTab === "itinerary" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"
                     }`}
                   >
                     🗺️ 지도 & 코스
@@ -902,9 +836,7 @@
                   <button
                     onClick={() => setActiveTab("budget")}
                     className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition ${
-                      activeTab === "budget"
-                        ? "bg-emerald-600 text-white"
-                        : "text-slate-400 hover:text-white"
+                      activeTab === "budget" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-white"
                     }`}
                   >
                     💰 총 금액 · 정산 탭
@@ -919,7 +851,6 @@
                   🎬 전체 경로 주행
                 </button>
 
-                {/* 요청하신 전용 [🔄 초기화] 버튼 */}
                 <button
                   onClick={() => setShowResetModal(true)}
                   className="px-3 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/40 text-rose-300 text-xs font-extrabold transition"
@@ -930,15 +861,11 @@
             </div>
           </header>
 
-          {/* =========================================================
-              탭 1: 지도 & 핀포인트 플래너
-             ========================================================= */}
           <main
             className={`flex-1 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 sm:p-5 ${
               activeTab === "itinerary" ? "block" : "hidden"
             }`}
           >
-            {/* 좌측 (4칸): 코스 목록 + 구간별 대중교통 시간 영구 표시 */}
             <section className="lg:col-span-4 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[82vh]">
               <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900">
                 <div>
@@ -949,7 +876,7 @@
                     </span>
                   </h2>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    완료(OK)를 눌러도 구간별 대중교통 소요 시간은 사라지지 않고 유지됩니다!
+                    완료(OK)를 눌러도 구간별 대중교통 소요 시간은 고정 유지됩니다!
                   </p>
                 </div>
                 <button
@@ -964,17 +891,12 @@
                 {pins.length === 0 ? (
                   <div className="text-center py-12 px-4 space-y-3">
                     <div className="text-3xl">🗺️</div>
-                    <div className="text-sm font-bold text-slate-300">
-                      등록된 여행 장소가 없습니다.
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      우측 상단의 <b>[＋ 장소 검색/추가]</b>를 눌러 가고 싶은 곳을 추가하거나, 샘플 코스를 불러와보세요!
-                    </p>
+                    <div className="text-sm font-bold text-slate-300">등록된 여행 장소가 없습니다.</div>
                     <button
                       onClick={handleRestoreSample}
                       className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-indigo-300 border border-slate-700"
                     >
-                      ✨ 오사카 샘플 코스 불러오기
+                      ✨ 샘플 코스 불러오기
                     </button>
                   </div>
                 ) : (
@@ -990,9 +912,7 @@
                           onClick={() => {
                             setSelectedPinId(pin.id);
                             if (mapInstanceRef.current) {
-                              mapInstanceRef.current.flyTo([pin.lat, pin.lng], 15, {
-                                duration: 0.7
-                              });
+                              mapInstanceRef.current.flyTo([pin.lat, pin.lng], 15, { duration: 0.7 });
                               if (markersRef.current[index]) {
                                 markersRef.current[index].openPopup();
                               }
@@ -1021,9 +941,7 @@
                               </span>
                               <div>
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-[11px] font-bold text-indigo-400">
-                                    {pin.category}
-                                  </span>
+                                  <span className="text-[11px] font-bold text-indigo-400">{pin.category}</span>
                                   {pin.completed && (
                                     <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-extrabold">
                                       방문 완료
@@ -1034,10 +952,7 @@
                               </div>
                             </div>
 
-                            <div
-                              className="flex items-center gap-1"
-                              onClick={(e) => e.stopPropagation()}
-                            >
+                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                               <button
                                 onClick={() => handleMovePinOrder(index, -1)}
                                 disabled={index === 0}
@@ -1073,9 +988,7 @@
                           >
                             <div className="text-xs">
                               <span className="text-slate-400">예산 ({pin.items.length}건): </span>
-                              <span className="font-extrabold text-emerald-400">
-                                {formatKRW(pinTotalKRW)}
-                              </span>
+                              <span className="font-extrabold text-emerald-400">{formatKRW(pinTotalKRW)}</span>
                             </div>
 
                             {!pin.completed ? (
@@ -1089,9 +1002,7 @@
                               <button
                                 onClick={() =>
                                   setPins((prev) =>
-                                    prev.map((p) =>
-                                      p.id === pin.id ? { ...p, completed: false } : p
-                                    )
+                                    prev.map((p) => (p.id === pin.id ? { ...p, completed: false } : p))
                                   )
                                 }
                                 className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold"
@@ -1102,7 +1013,6 @@
                           </div>
                         </div>
 
-                        {/* A -> B 대중교통 소요 시간 고정 카드 (OK 완료 후에도 절대 안 사라짐!) */}
                         {transitToNext && (
                           <div className="my-1.5 pl-4 relative flex items-center justify-between bg-indigo-950/30 border border-indigo-500/40 rounded-2xl px-3.5 py-2.5">
                             <div className="flex items-center gap-2.5">
@@ -1131,7 +1041,6 @@
                               <button
                                 onClick={() => openGoogleMapsTransit(pin, nextPin)}
                                 className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold border border-slate-700"
-                                title="구글 지도 앱으로 실제 전철/버스 노선 보기"
                               >
                                 구글길찾기↗
                               </button>
@@ -1145,14 +1054,12 @@
               </div>
             </section>
 
-            {/* 중앙 (5칸): 구글 맵 타일 기반 선명한 지도 + 사라지지 않는 구간 소요시간 요약 바 */}
             <section className="lg:col-span-5 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative min-h-[450px] lg:max-h-[82vh]">
               <div ref={mapContainerRef} className="w-full h-full flex-1 z-10" />
 
-              {/* 지도 상단 컨트롤 바 */}
               <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-none">
                 <div className="bg-slate-900/95 backdrop-blur-md border border-slate-700 px-3 py-2 rounded-2xl shadow-lg pointer-events-auto text-xs font-bold text-slate-200">
-                  💡 지도 위 <b>노란색 시간 배지</b>로 구간별 이동시간을 한눈에 확인하세요
+                  💡 지도 위 <b>노란색 시간 배지</b>로 구간별 이동시간을 확인하세요
                 </div>
                 <button
                   onClick={() => {
@@ -1167,14 +1074,13 @@
                 </button>
               </div>
 
-              {/* 1) 애니메이션 주행 중이거나, 2) 주행이 끝난 뒤에도 대중교통 이동시간을 계속 고정 표시하는 하단 배너! */}
               {(animatingInfo || lastCompletedSegment) && (
                 <div className="absolute bottom-4 left-4 right-4 z-30 bg-slate-900/95 backdrop-blur-xl border-2 border-indigo-500 rounded-2xl p-3.5 shadow-2xl">
                   {animatingInfo ? (
                     <>
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-extrabold text-[11px]">
-                          🚌 대중교통 이동 중... ({animatingInfo.progress}%)
+                          🚌 이동 중... ({animatingInfo.progress}%)
                         </span>
                         <span className="text-xs font-black text-amber-300">
                           예상 소요시간: {animatingInfo.transit.formatted} ({animatingInfo.transit.distanceKm}km)
@@ -1205,7 +1111,7 @@
                             </span>
                           </div>
                           <div className="text-sm font-black text-amber-300 mt-1">
-                            🚇 {lastCompletedSegment.transit.mode} 기준 예상 소요시간:{" "}
+                            🚇 {lastCompletedSegment.transit.mode} 기준 소요시간:{" "}
                             <span className="underline decoration-amber-400">
                               {lastCompletedSegment.transit.formatted}
                             </span>{" "}
@@ -1215,10 +1121,7 @@
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() =>
-                              animateBetweenPins(
-                                lastCompletedSegment.fromPin,
-                                lastCompletedSegment.toPin
-                              )
+                              animateBetweenPins(lastCompletedSegment.fromPin, lastCompletedSegment.toPin)
                             }
                             className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
                           >
@@ -1238,7 +1141,6 @@
               )}
             </section>
 
-            {/* 우측 (3칸): 선택된 핀의 고정 이동시간 + 상세 메모 + 쇼핑 금액 (엔화/원화) */}
             <section className="lg:col-span-3 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[82vh]">
               {selectedPin ? (
                 <>
@@ -1260,16 +1162,11 @@
                     </div>
                     <h2 className="font-black text-lg text-white mt-1">{selectedPin.name}</h2>
 
-                    {/* 우측 상단에도 고정으로 뜨는 이전 핀/다음 핀 대중교통 소요시간 박스! */}
                     <div className="mt-3 space-y-1.5 bg-slate-950/80 p-2.5 rounded-2xl border border-slate-800 text-xs">
                       {prevTransitInfo ? (
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-400">
-                            ⬅️ <b>{prevTransitInfo.from.name}</b>에서:
-                          </span>
-                          <span className="font-extrabold text-amber-300">
-                            🚌 약 {prevTransitInfo.info.formatted}
-                          </span>
+                          <span className="text-slate-400">⬅️ <b>{prevTransitInfo.from.name}</b>에서:</span>
+                          <span className="font-extrabold text-amber-300">🚌 약 {prevTransitInfo.info.formatted}</span>
                         </div>
                       ) : (
                         <div className="text-slate-500 text-[11px]">🏁 첫 번째 출발 장소입니다</div>
@@ -1277,21 +1174,14 @@
 
                       {nextTransitInfo && (
                         <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
-                          <span className="text-slate-400">
-                            ➡️ 다음 <b>{nextTransitInfo.to.name}</b>까지:
-                          </span>
-                          <span className="font-extrabold text-indigo-300">
-                            🚌 약 {nextTransitInfo.info.formatted}
-                          </span>
+                          <span className="text-slate-400">➡️ 다음 <b>{nextTransitInfo.to.name}</b>까지:</span>
+                          <span className="font-extrabold text-indigo-300">🚌 약 {nextTransitInfo.info.formatted}</span>
                         </div>
                       )}
 
-                      {/* 직접 소요시간(분) 수정하기 */}
                       {selectedPinIndex > 0 && (
                         <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between">
-                          <span className="text-[11px] text-slate-400">
-                            직접 이동시간(분) 지정:
-                          </span>
+                          <span className="text-[11px] text-slate-400">직접 이동시간(분) 지정:</span>
                           <input
                             type="number"
                             placeholder="자동계산"
@@ -1300,9 +1190,7 @@
                               const val = e.target.value === "" ? null : Number(e.target.value);
                               setPins((prev) =>
                                 prev.map((p) =>
-                                  p.id === selectedPin.id
-                                    ? { ...p, customTransitMinutes: val }
-                                    : p
+                                  p.id === selectedPin.id ? { ...p, customTransitMinutes: val } : p
                                 )
                               );
                             }}
@@ -1314,7 +1202,6 @@
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {/* 1. 상세 메모 */}
                     <div>
                       <label className="block text-xs font-extrabold text-slate-300 mb-1.5">
                         📝 장소 메모 (영업시간 / 살 것 / 꿀팁)
@@ -1325,34 +1212,26 @@
                         onChange={(e) => {
                           const val = e.target.value;
                           setPins((prev) =>
-                            prev.map((p) =>
-                              p.id === selectedPin.id ? { ...p, memo: val } : p
-                            )
+                            prev.map((p) => (p.id === selectedPin.id ? { ...p, memo: val } : p))
                           );
                         }}
-                        placeholder="이 장소에서 할 일이나 메모를 적어두세요 (자동 저장됨)"
+                        placeholder="이 장소에서 할 일이나 메모를 적어두세요"
                         className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none"
                       />
                     </div>
 
-                    {/* 2. 살 것 & 예상 금액 (엔화 ¥ / 원화 ₩ 선택 입력) */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs font-extrabold text-slate-300">
-                          🛍️ 살 것 / 먹을 것 금액 작성
-                        </label>
+                        <label className="text-xs font-extrabold text-slate-300">🛍️ 살 것 / 먹을 것 금액</label>
                         <span className="text-xs font-extrabold text-emerald-400">
-                          합계:{" "}
-                          {formatKRW(
-                            selectedPin.items.reduce((s, i) => s + Number(i.price || 0), 0)
-                          )}
+                          합계: {formatKRW(selectedPin.items.reduce((s, i) => s + Number(i.price || 0), 0))}
                         </span>
                       </div>
 
                       <form onSubmit={handleAddItem} className="space-y-2 mb-3">
                         <input
                           type="text"
-                          placeholder="품목명 (예: 동전파스, 타코야키, 입장권)"
+                          placeholder="품목명 (예: 동전파스, 타코야키)"
                           value={newItemTitle}
                           onChange={(e) => setNewItemTitle(e.target.value)}
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
@@ -1408,9 +1287,7 @@
                                           ? {
                                               ...p,
                                               items: p.items.map((it) =>
-                                                it.id === item.id
-                                                  ? { ...it, bought: !it.bought }
-                                                  : it
+                                                it.id === item.id ? { ...it, bought: !it.bought } : it
                                               )
                                             }
                                           : p
@@ -1478,12 +1355,8 @@
             </section>
           </main>
 
-          {/* =========================================================
-              탭 2: 총 금액 & 정산 전용 탭 (원화 + 엔화 동시 표시)
-             ========================================================= */}
           {activeTab === "budget" && (
             <main className="flex-1 max-w-[1300px] w-full mx-auto p-4 lg:p-8 space-y-6">
-              {/* 환율 설정 바 */}
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs font-bold text-slate-300">
                   💴 일본 엔화(¥) 자동 환산 기준 (1엔당 원화 설정):
@@ -1497,34 +1370,26 @@
                     onChange={(e) => setExchangeRate(Number(e.target.value) || 9.0)}
                     className="w-24 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-extrabold text-amber-300 text-right"
                   />
-                  <span className="text-xs text-slate-300 font-bold">원 (100엔 = {Math.round(exchangeRate * 100)}원)</span>
+                  <span className="text-xs text-slate-300 font-bold">원</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-slate-900 border border-slate-800 p-5 rounded-3xl">
                   <span className="text-xs font-bold text-slate-400">💰 총 예상 금액</span>
-                  <div className="text-2xl font-black text-white mt-1">
-                    {formatKRW(budgetStats.totalPlannedKRW)}
-                  </div>
-                  <div className="text-sm font-bold text-amber-300 mt-0.5">
-                    약 {formatJPY(budgetStats.totalPlannedJPY)}
-                  </div>
+                  <div className="text-2xl font-black text-white mt-1">{formatKRW(budgetStats.totalPlannedKRW)}</div>
+                  <div className="text-sm font-bold text-amber-300 mt-0.5">약 {formatJPY(budgetStats.totalPlannedJPY)}</div>
                 </div>
 
                 <div className="bg-slate-900 border border-emerald-500/30 p-5 rounded-3xl">
                   <span className="text-xs font-bold text-emerald-400">✅ 결제 완료 금액</span>
-                  <div className="text-2xl font-black text-emerald-400 mt-1">
-                    {formatKRW(budgetStats.totalBoughtKRW)}
-                  </div>
+                  <div className="text-2xl font-black text-emerald-400 mt-1">{formatKRW(budgetStats.totalBoughtKRW)}</div>
                   <p className="text-xs text-slate-400 mt-1">체크 완료한 품목 합계</p>
                 </div>
 
                 <div className="bg-slate-900 border border-amber-500/30 p-5 rounded-3xl">
                   <span className="text-xs font-bold text-amber-400">⏳ 남은 지출 예정</span>
-                  <div className="text-2xl font-black text-amber-300 mt-1">
-                    {formatKRW(budgetStats.remainingKRW)}
-                  </div>
+                  <div className="text-2xl font-black text-amber-300 mt-1">{formatKRW(budgetStats.remainingKRW)}</div>
                   <p className="text-xs text-slate-400 mt-1">앞으로 쓸 예산</p>
                 </div>
 
@@ -1547,30 +1412,19 @@
                       </button>
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-white mt-1">
-                    {formatKRW(budgetStats.perPersonKRW)}
-                  </div>
-                  <div className="text-xs font-bold text-indigo-200 mt-0.5">
-                    1인당 약 {formatJPY(budgetStats.perPersonJPY)}
-                  </div>
+                  <div className="text-2xl font-black text-white mt-1">{formatKRW(budgetStats.perPersonKRW)}</div>
+                  <div className="text-xs font-bold text-indigo-200 mt-0.5">약 {formatJPY(budgetStats.perPersonJPY)}</div>
                 </div>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-                <h3 className="text-base font-extrabold text-white">
-                  📊 장소별 쇼핑·지출 상세 내역
-                </h3>
+                <h3 className="text-base font-extrabold text-white">📊 장소별 쇼핑·지출 상세 내역</h3>
                 {pins.map((pin, idx) => {
                   const pinTotal = pin.items.reduce((s, i) => s + Number(i.price || 0), 0);
                   return (
-                    <div
-                      key={pin.id}
-                      className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2"
-                    >
+                    <div key={pin.id} className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-extrabold text-sm text-white">
-                          #{idx + 1} {pin.name}
-                        </span>
+                        <span className="font-extrabold text-sm text-white">#{idx + 1} {pin.name}</span>
                         <span className="font-black text-sm text-emerald-400">
                           {formatKRW(pinTotal)} ({formatJPY(Math.round(pinTotal / exchangeRate))})
                         </span>
@@ -1581,8 +1435,7 @@
                             key={it.id}
                             className="text-xs px-3 py-1 rounded-xl bg-slate-900 border border-slate-700 text-slate-200"
                           >
-                            {it.bought ? "✅ " : "🛍️ "}
-                            {it.title}: <b>{formatKRW(it.price)}</b>
+                            {it.bought ? "✅ " : "🛍️ "} {it.title}: <b>{formatKRW(it.price)}</b>
                           </span>
                         ))}
                       </div>
@@ -1593,25 +1446,16 @@
             </main>
           )}
 
-          {/* =========================================================
-              모달 1: 실제 전 세계 장소 실시간 검색 & 추가 모달
-             ========================================================= */}
           {showAddModal && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-base sm:text-lg text-white">
-                    📍 실제 장소 검색해서 지도에 핀 꽂기
-                  </h3>
-                  <button
-                    onClick={() => setShowAddModal(false)}
-                    className="text-slate-400 hover:text-white text-sm font-bold"
-                  >
+                  <h3 className="font-extrabold text-base sm:text-lg text-white">📍 실제 장소 검색해서 핀 꽂기</h3>
+                  <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white text-sm font-bold">
                     ✕ 닫기
                   </button>
                 </div>
 
-                {/* 실시간 지도 검색 폼 */}
                 <form onSubmit={handleRealPlaceSearch} className="space-y-2.5">
                   <div className="flex gap-2">
                     <select
@@ -1630,7 +1474,7 @@
                       type="text"
                       value={searchKeyword}
                       onChange={(e) => setSearchKeyword(e.target.value)}
-                      placeholder="장소명 입력 (예: 도톤보리, 유니버설 스튜디오, 도쿄타워)"
+                      placeholder="장소명 입력 (예: 도톤보리, 시부야역)"
                       className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
                     />
                     <button
@@ -1638,17 +1482,14 @@
                       disabled={isSearching}
                       className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shrink-0"
                     >
-                      {isSearching ? "검색중..." : "🔍 위치 검색"}
+                      {isSearching ? "검색중..." : "🔍 검색"}
                     </button>
                   </div>
                 </form>
 
-                {/* 실시간 검색 결과 목록 */}
                 {searchResults.length > 0 && (
                   <div className="space-y-1.5 max-h-48 overflow-y-auto bg-slate-950 p-2.5 rounded-2xl border border-indigo-500/40">
-                    <div className="text-[11px] font-bold text-indigo-300 px-1">
-                      🔍 실제 지도 검색 결과 (클릭하면 해당 위치에 핀이 꽂힙니다)
-                    </div>
+                    <div className="text-[11px] font-bold text-indigo-300 px-1">검색 결과 (클릭하여 추가)</div>
                     {searchResults.map((res, idx) => (
                       <div
                         key={idx}
@@ -1661,29 +1502,20 @@
                             lng: parseFloat(res.lon)
                           })
                         }
-                        className="p-2.5 rounded-xl bg-slate-900 hover:bg-indigo-950/80 border border-slate-800 hover:border-indigo-500 cursor-pointer flex items-center justify-between gap-2 transition"
+                        className="p-2.5 rounded-xl bg-slate-900 hover:bg-indigo-950/80 border border-slate-800 hover:border-indigo-500 cursor-pointer flex items-center justify-between gap-2"
                       >
                         <div>
-                          <div className="text-xs font-extrabold text-white">
-                            {res.name || res.display_name.split(",")[0]}
-                          </div>
-                          <div className="text-[10px] text-slate-400 line-clamp-1">
-                            {res.display_name}
-                          </div>
+                          <div className="text-xs font-extrabold text-white">{res.name || res.display_name.split(",")[0]}</div>
+                          <div className="text-[10px] text-slate-400 line-clamp-1">{res.display_name}</div>
                         </div>
-                        <span className="text-xs font-extrabold text-emerald-400 shrink-0">
-                          ＋ 핀 꽂기
-                        </span>
+                        <span className="text-xs font-extrabold text-emerald-400 shrink-0">＋ 핀 꽂기</span>
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* 일본 주요 인기 명소 원클릭 프리셋 */}
                 <div>
-                  <div className="text-xs font-bold text-slate-400 mb-2">
-                    🇯🇵 일본 인기 여행지 원클릭 바로 추가
-                  </div>
+                  <div className="text-xs font-bold text-slate-400 mb-2">🇯🇵 일본 인기 여행지 원클릭 추가</div>
                   <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
                     {PRESET_PLACES.map((p, i) => (
                       <div
@@ -1693,9 +1525,7 @@
                       >
                         <div>
                           <div className="text-xs font-extrabold text-white">{p.name}</div>
-                          <div className="text-[10px] text-slate-400">
-                            {p.category} · {p.address}
-                          </div>
+                          <div className="text-[10px] text-slate-400">{p.category} · {p.address}</div>
                         </div>
                         <span className="text-xs font-bold text-indigo-400">추가 ＋</span>
                       </div>
@@ -1706,20 +1536,12 @@
             </div>
           )}
 
-          {/* =========================================================
-              모달 2: 요청하신 [🔄 초기화] 전용 선택 모달
-             ========================================================= */}
           {showResetModal && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-extrabold text-base text-white">🔄 여행 계획 초기화 옵션</h3>
-                  <button
-                    onClick={() => setShowResetModal(false)}
-                    className="text-slate-400 hover:text-white text-sm font-bold"
-                  >
-                    ✕
-                  </button>
+                  <button onClick={() => setShowResetModal(false)} className="text-slate-400 hover:text-white text-sm font-bold">✕</button>
                 </div>
 
                 <div className="space-y-2.5">
@@ -1727,36 +1549,24 @@
                     onClick={handleResetCompletedOnly}
                     className="w-full p-3.5 rounded-2xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-left transition"
                   >
-                    <div className="text-xs font-extrabold text-indigo-300">
-                      1️⃣ [OK 방문 완료] 상태만 초기화하기
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      작성해둔 장소와 메모·금액은 그대로 유지하고, 1번 핀부터 다시 출발할 수 있게 완료 체크만 해제합니다.
-                    </p>
+                    <div className="text-xs font-extrabold text-indigo-300">1️⃣ [OK 방문 완료] 상태만 초기화하기</div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">장소와 메모는 유지하고 완료 체크만 해제합니다.</p>
                   </button>
 
                   <button
                     onClick={handleClearAllPins}
                     className="w-full p-3.5 rounded-2xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-left transition"
                   >
-                    <div className="text-xs font-extrabold text-rose-300">
-                      2️⃣ 모든 핀 싹 지우기 (빈 지도로 새로 시작)
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      기존 핀을 모두 지우고 내가 가고 싶은 장소만 처음부터 하나씩 추가합니다.
-                    </p>
+                    <div className="text-xs font-extrabold text-rose-300">2️⃣ 모든 핀 싹 지우기 (빈 지도로 시작)</div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">기존 핀을 모두 지우고 새로 시작합니다.</p>
                   </button>
 
                   <button
                     onClick={handleRestoreSample}
                     className="w-full p-3.5 rounded-2xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-left transition"
                   >
-                    <div className="text-xs font-extrabold text-emerald-300">
-                      3️⃣ 일본 오사카 기본 샘플 코스 불러오기
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      도톤보리·이치란·돈키호테·우메다 스카이빌딩 예시 코스로 복원합니다.
-                    </p>
+                    <div className="text-xs font-extrabold text-emerald-300">3️⃣ 오사카 샘플 코스 불러오기</div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">기본 오사카 코스로 복원합니다.</p>
                   </button>
                 </div>
               </div>
