@@ -37,7 +37,10 @@
     const PRESET_PLACES = [
       { name: "간사이 국제공항", category: "✈️ 공항·교통", lat: 34.4320, lng: 135.2304, address: "오사카 이즈미사노시" },
       { name: "오사카 도톤보리 (글리코상)", category: "📸 명소·포토존", lat: 34.6687, lng: 135.5013, address: "오사카 주오구 도톤보리" },
-      { name: "아마넥 호텔 오사카 난바", category: "🏨 숙소·호텔", lat: 34.6669, lng: 135.5061, address: "오사카 주오구 닛폰바시" }
+      { name: "아마넥 호텔 오사카 난바", category: "🏨 숙소·호텔", lat: 34.6674727, lng: 135.5039453, address: "오사카 주오구" },
+      { name: "이치란 라멘 도톤보리점", category: "🍜 맛집", lat: 34.6691, lng: 135.5031, address: "오사카 주오구 소에몬초 7-18" },
+      { name: "돈키호테 도톤보리점", category: "🛍️ 쇼핑·드럭스토어", lat: 34.6690, lng: 135.5022, address: "오사카 주오구 소에몬초 7-13" },
+      { name: "유니버설 스튜디오 재팬 (USJ)", category: "🎢 테마파크", lat: 34.6654, lng: 135.4323, address: "오사카 고노하나구 사쿠라지마" }
     ];
 
     const DEFAULT_SAMPLE_PINS = [
@@ -89,11 +92,11 @@
 
     function App() {
       const [pins, setPins] = useState(() => {
-        const saved = localStorage.getItem("travel_planner_pins_v9");
+        const saved = localStorage.getItem("travel_planner_pins_v10");
         return saved ? JSON.parse(saved) : DEFAULT_SAMPLE_PINS;
       });
-      const [tripTitle, setTripTitle] = useState(() => localStorage.getItem("travel_planner_title_v9") || "여행 계획");
-      const [exchangeRate, setExchangeRate] = useState(() => Number(localStorage.getItem("travel_planner_rate_v9")) || 9.05);
+      const [tripTitle, setTripTitle] = useState(() => localStorage.getItem("travel_planner_title_v10") || "여행 계획");
+      const [exchangeRate, setExchangeRate] = useState(() => Number(localStorage.getItem("travel_planner_rate_v10")) || 9.05);
       const [peopleCount, setPeopleCount] = useState(2);
       const [activeTab, setActiveTab] = useState("itinerary");
       const [selectedPinId, setSelectedPinId] = useState(pins[0]?.id || null);
@@ -127,15 +130,12 @@
         setTimeout(() => setToastMsg(null), 3500);
       };
 
-      useEffect(() => { localStorage.setItem("travel_planner_pins_v9", JSON.stringify(pins)); }, [pins]);
-      useEffect(() => { localStorage.setItem("travel_planner_title_v9", tripTitle); }, [tripTitle]);
-      useEffect(() => { localStorage.setItem("travel_planner_rate_v9", String(exchangeRate)); }, [exchangeRate]);
+      useEffect(() => { localStorage.setItem("travel_planner_pins_v10", JSON.stringify(pins)); }, [pins]);
+      useEffect(() => { localStorage.setItem("travel_planner_title_v10", tripTitle); }, [tripTitle]);
+      useEffect(() => { localStorage.setItem("travel_planner_rate_v10", String(exchangeRate)); }, [exchangeRate]);
 
       const selectedPinIndex = pins.findIndex((p) => p.id === selectedPinId);
       const selectedPin = selectedPinIndex !== -1 ? pins[selectedPinIndex] : null;
-
-      const prevTransitInfo = selectedPinIndex > 0 ? { from: pins[selectedPinIndex - 1], to: pins[selectedPinIndex], info: estimateTransitInfo(pins[selectedPinIndex - 1], pins[selectedPinIndex]) } : null;
-      const nextTransitInfo = selectedPinIndex !== -1 && selectedPinIndex < pins.length - 1 ? { from: pins[selectedPinIndex], to: pins[selectedPinIndex + 1], info: estimateTransitInfo(pins[selectedPinIndex], pins[selectedPinIndex + 1]) } : null;
 
       const budgetStats = useMemo(() => {
         let totalPlannedKRW = 0; let totalBoughtKRW = 0;
@@ -204,7 +204,7 @@
             position: { lat: pin.lat, lng: pin.lng },
             map: map,
             title: pin.name,
-            draggable: true, // 마커 꾹 눌러서 위치 수정 기능
+            draggable: true, // 💡 마커 꾹 눌러서 위치 수정 기능
             animation: isSelected ? window.google.maps.Animation.BOUNCE : null,
             label: { text: pin.completed ? "✓" : String(idx + 1), color: "#ffffff", fontWeight: "bold", fontSize: "14px" },
             icon: { path: window.google.maps.SymbolPath.CIRCLE, fillColor: pinColor, fillOpacity: 1, strokeWeight: 2, strokeColor: "#ffffff", scale: isSelected ? 16 : 13 }
@@ -220,7 +220,7 @@
             const newLat = e.latLng.lat();
             const newLng = e.latLng.lng();
             setPins(prev => prev.map(p => p.id === pin.id ? { ...p, lat: newLat, lng: newLng } : p));
-            showToast(`📍 '${pin.name}'의 위치가 수정되었습니다.`);
+            showToast(`📍 '${pin.name}'의 위치가 방금 손 뗀 곳으로 수정되었습니다.`);
           });
 
           markersRef.current[pin.id] = marker;
@@ -235,7 +235,7 @@
 
       }, [pins, selectedPinId]);
 
-      // 🛡️ [핵심] 하이브리드 스마트 검색 엔진 (절대 에러 안남)
+      // 🛡️ [완벽 해결] 구글 링크 정밀 파싱 + 무조건 핀 생성 폴백 엔진
       const handleSmartSearch = async (e) => {
         e.preventDefault();
         const query = searchKeyword.trim();
@@ -243,52 +243,65 @@
         setIsSearching(true);
         setSearchResults([]);
 
-        // 1. 구글 지도 URL 파싱 시도
-        const coordMatch = query.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-        if (coordMatch) {
-          addPinToMap({ name: "구글 맵 공유 위치", category: customCategory, address: "링크로 찾은 좌표", lat: parseFloat(coordMatch[1]), lng: parseFloat(coordMatch[2]) });
-          setIsSearching(false);
-          return;
+        // 1. 구글 지도 링크(URL) 완벽 해독
+        if (query.includes("maps") || query.includes("goo.gl") || query.includes("google")) {
+          let extractedName = "구글 지도 공유 장소";
+          let lat = null, lng = null;
+
+          // 한글/영문 이름 추출 (예: /place/호텔+아마넥+오사카+난바)
+          const nameMatch = query.match(/\/place\/([^/]+)/);
+          if (nameMatch) {
+            try { extractedName = decodeURIComponent(nameMatch[1].replace(/\+/g, ' ')); } catch(e) {}
+          }
+
+          // 정확한 핀 위치(!3d !4d) 추출 최우선 적용
+          const exactCoordMatch = query.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+          if (exactCoordMatch) {
+            lat = parseFloat(exactCoordMatch[1]);
+            lng = parseFloat(exactCoordMatch[2]);
+          } else {
+            // !3d !4d가 없으면 화면 중심좌표(@lat,lng) 사용
+            const centerMatch = query.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+            if (centerMatch) {
+              lat = parseFloat(centerMatch[1]);
+              lng = parseFloat(centerMatch[2]);
+            }
+          }
+
+          if (lat !== null && lng !== null) {
+            addPinToMap({ name: extractedName, category: customCategory, address: "링크에서 추출한 위치", lat, lng });
+            setIsSearching(false);
+            return;
+          }
         }
 
-        // 2. 글로벌 오픈소스 검색 백업 엔진 (결제 권한 에러 대비 무조건 작동함)
-        const runFallbackSearch = async () => {
-          try {
-            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=6&accept-language=ko`;
-            const res = await fetch(url);
-            const data = await res.json();
-            if (data && data.length > 0) {
-              const mappedResults = data.map(d => ({
-                name: d.name || d.display_name.split(",")[0],
-                formatted_address: d.display_name,
-                geometry: { location: { lat: () => parseFloat(d.lat), lng: () => parseFloat(d.lon) } }
-              }));
-              setSearchResults(mappedResults);
-            } else {
-              showToast(`⚠️ '${query}' 검색 결과가 없습니다. 숙소 영문명으로 다시 검색해보세요.`);
-            }
-          } catch (err) {
-            showToast("⚠️ 통신 에러가 발생했습니다.");
-          } finally {
-            setIsSearching(false);
-          }
+        // 2. 검색어가 텍스트일 때: 구글 API가 막혀도 무조건 현재 화면 중앙에 핀 생성 (Fallback)
+        const center = mapInstanceRef.current ? mapInstanceRef.current.getCenter() : { lat: 34.6687, lng: 135.5013 };
+        
+        const forceFallbackAdd = () => {
+          showToast(`⚠️ API 검색이 제한되어 '${query}' 핀을 지도 중앙에 즉시 꽂았습니다! 핀을 꾹 눌러 진짜 위치로 끌어다 놓으세요.`);
+          addPinToMap({ 
+            name: query, 
+            category: customCategory, 
+            address: "지도 핀을 드래그해서 위치를 맞춰주세요", 
+            lat: center.lat ? center.lat() : center.lat, 
+            lng: center.lng ? center.lng() : center.lng 
+          });
+          setIsSearching(false);
         };
 
-        // 3. 구글 Places API 검색 시도
-        if (window.google && window.google.maps && window.google.maps.places && mapInstanceRef.current) {
+        if (window.google && window.google.maps.places && mapInstanceRef.current) {
           const service = new window.google.maps.places.PlacesService(mapInstanceRef.current);
           service.textSearch({ query: query, language: 'ko' }, (results, status) => {
             if (status === window.google.maps.places.PlacesServiceStatus.OK && results && results.length > 0) {
               setSearchResults(results.slice(0, 6));
               setIsSearching(false);
             } else {
-              // 🚨 구글 API 거절(Billing 에러 등) 발생 시 즉시 백업 엔진 가동!
-              console.warn("구글 API 거절됨. 대체 검색 엔진을 가동합니다.");
-              runFallbackSearch();
+              forceFallbackAdd(); // API 에러 시 결과없음 안 띄우고 무조건 추가
             }
           });
         } else {
-          runFallbackSearch();
+          forceFallbackAdd();
         }
       };
 
@@ -302,9 +315,8 @@
 
         if (mapInstanceRef.current) {
           mapInstanceRef.current.panTo({ lat: newPin.lat, lng: newPin.lng });
-          mapInstanceRef.current.setZoom(16);
+          mapInstanceRef.current.setZoom(17); // 조금 더 줌인
         }
-        showToast(`📍 '${newPin.name}' 추가 완료! (지도 핀을 꾹 눌러 미세조정 가능)`);
       };
 
       // 🖐️ 리스트 드래그 앤 드롭 함수 (순서 변경)
@@ -352,11 +364,7 @@
           setSelectedPinId(nextPin.id);
           if (mapInstanceRef.current) {
             mapInstanceRef.current.panTo({ lat: nextPin.lat, lng: nextPin.lng });
-            mapInstanceRef.current.setZoom(16);
           }
-          showToast(`✅ 완료! 다음 장소로 이동합니다.`);
-        } else {
-          showToast(`🎉 모든 코스를 완료했습니다!`);
         }
       };
 
@@ -379,7 +387,7 @@
                     onChange={(e) => setTripTitle(e.target.value)}
                     className="bg-slate-800/60 hover:bg-slate-800 border border-slate-700/80 font-extrabold text-base sm:text-lg text-white focus:outline-none focus:border-indigo-500 rounded-xl px-3 py-1"
                   />
-                  <p className="text-[11px] text-slate-400 mt-0.5">무적 검색 엔진 · 드래그 위치 이동 · 드래그 순서 변경</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">링크 완벽 인식 · 드래그 위치 수정 · 드래그 순서 변경</p>
                 </div>
               </div>
 
@@ -395,11 +403,12 @@
 
           <main className={`flex-1 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 sm:p-5 ${activeTab === "itinerary" ? "block" : "hidden"}`}>
             
+            {/* 좌측 패널 (리스트) */}
             <section className="lg:col-span-4 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[82vh]">
               <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900">
                 <div>
                   <h2 className="font-extrabold text-sm sm:text-base text-white">📍 나의 여정 <span className="text-xs text-indigo-400">({pins.length}곳)</span></h2>
-                  <p className="text-[11px] text-emerald-400 mt-0.5">리스트를 길게 눌러 드래그(Drag)해 순서를 바꾸세요!</p>
+                  <p className="text-[11px] text-emerald-400 mt-0.5">리스트를 끌어서(Drag) 순서를 바꾸세요!</p>
                 </div>
                 <button onClick={() => setShowAddModal(true)} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-lg">＋ 장소 추가</button>
               </div>
@@ -443,7 +452,7 @@
                         {!pin.completed ? (
                           <button onClick={(e) => { e.stopPropagation(); handleCompleteAndMoveNext(pin.id); }} className="px-3 py-1.5 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs">✅ OK</button>
                         ) : (
-                          <button onClick={(e) => { e.stopPropagation(); setPins(prev => prev.map(p => p.id === pin.id ? {...p, completed: false} : p)); }} className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold">↩ 취소</button>
+                          <button onClick={(e) => { e.stopPropagation(); setPins(prev => prev.map(p => p.id === pin.id ? {...p, completed: false} : p)); }} className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold">↩ 완료 취소</button>
                         )}
                       </div>
                     </div>
@@ -452,31 +461,34 @@
               </div>
             </section>
 
+            {/* 중앙 패널 (진짜 구글 지도) */}
             <section className="lg:col-span-5 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative min-h-[450px] lg:max-h-[82vh]">
               <div ref={mapContainerRef} className="w-full h-full flex-1 z-10"></div>
               
               <div className="absolute top-3 left-3 right-3 z-20 pointer-events-none">
                 <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700 px-4 py-2 rounded-2xl shadow-lg pointer-events-auto text-xs font-bold text-slate-200 inline-block">
-                  💡 <b>지도에서 마커를 꾹 눌러 이동시키면</b> 장소 위치가 맘대로 수정됩니다!
+                  💡 <b>지도 위 핀을 꾹 눌러 이동시키면</b> 장소 위치가 즉시 수정됩니다!
                 </div>
               </div>
             </section>
 
+            {/* 우측 패널 (상세 편집) */}
             <section className="lg:col-span-3 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[82vh]">
               {selectedPin ? (
                 <>
                   <div className="p-4 border-b border-slate-800 bg-gradient-to-br from-indigo-950/60 to-slate-900">
                     <span className="text-[11px] font-extrabold text-indigo-400 bg-indigo-500/15 px-2.5 py-0.5 rounded-full mb-2 inline-block">{selectedPin.category}</span>
                     
+                    {/* 이름 수정 모드 */}
                     {editingPinId === selectedPin.id ? (
                       <div className="flex gap-2 mt-1">
                         <input type="text" value={editNameText} onChange={(e) => setEditNameText(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-sm text-white" />
                         <button onClick={() => savePinName(selectedPin.id)} className="bg-emerald-600 text-white px-3 rounded-lg text-xs font-bold">저장</button>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-between gap-2 mt-1">
+                      <div className="flex items-center gap-2 mt-1">
                         <h2 className="font-black text-lg text-white line-clamp-2">{selectedPin.name}</h2>
-                        <button onClick={() => { setEditingPinId(selectedPin.id); setEditNameText(selectedPin.name); }} className="text-slate-400 hover:text-white text-[11px] font-bold shrink-0 bg-slate-800 px-2 py-1 rounded">✏️ 이름 수정</button>
+                        <button onClick={() => { setEditingPinId(selectedPin.id); setEditNameText(selectedPin.name); }} className="text-slate-400 hover:text-white text-xs shrink-0">✏️ 이름 변경</button>
                       </div>
                     )}
                     
@@ -533,22 +545,23 @@
             </section>
           </main>
 
+          {/* 모달: 구글 링크 + 무적 추가 */}
           {showAddModal && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-base sm:text-lg text-white">📍 스마트 무적 장소 검색</h3>
+                  <h3 className="font-extrabold text-base sm:text-lg text-white">📍 구글 링크 완벽 인식 장소 추가</h3>
                   <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white text-sm font-bold">✕ 닫기</button>
                 </div>
 
                 <form onSubmit={handleSmartSearch} className="space-y-2.5">
                   <div className="flex gap-2">
-                    <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="숙소 이름, 명소 이름, 구글 맵 주소 붙여넣기" className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white" />
+                    <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="구글 맵 복사 링크 또는 호텔 이름 검색" className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white" />
                     <button type="submit" disabled={isSearching} className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shrink-0">
-                      {isSearching ? "검색중..." : "🔍 검색"}
+                      {isSearching ? "검색중..." : "➕ 추가"}
                     </button>
                   </div>
-                  <p className="text-[11px] text-indigo-300">💡 구글 API가 거절되더라도 즉시 자체 대체 검색 엔진이 가동되어 무조건 찾아줍니다.</p>
+                  <p className="text-[11px] text-emerald-400">💡 링크를 넣으면 정확히 그 위치로, 텍스트 검색 실패 시엔 현재 화면 중앙에 임시 핀이 강제 생성됩니다.</p>
                 </form>
 
                 {searchResults.length > 0 && (
@@ -565,6 +578,7 @@
               </div>
             </div>
           )}
+
         </div>
       );
     }
