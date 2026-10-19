@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>여행 계획 | 스마트 여행 플래너 PRO</title>
+  <title>여행 계획 | 스마트 여행 플래너</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -13,8 +13,9 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
-  <!-- 구글 맵스 API (사용자 제공 키 적용) -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA5twLli10Tc9c-52SGMNHcgTTrgHwOj8o&libraries=places,geometry&language=ko&region=JP"></script>
+  <!-- Leaflet CSS & JS (구글 한국어 지도 타일 + 마커 드래그 & 경로 애니메이션 엔진) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <!-- Pretendard Font -->
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
@@ -22,541 +23,130 @@
   <style>
     body {
       font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      background-color: #090d16;
+      background-color: #0f172a;
       color: #f8fafc;
       overflow-x: hidden;
     }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
     ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.5); border-radius: 9999px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.85); }
-    .drag-over { border: 2px dashed #6366f1 !important; background-color: rgba(99, 102, 241, 0.15) !important; }
-    @keyframes pulse-ring {
-      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7); }
-      70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
-      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.8); }
+
+    .custom-pin {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 50% 50% 50% 0;
+      transform: rotate(-45deg);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+      border: 3px solid #ffffff;
+      transition: transform 0.2s ease;
+      cursor: grab;
     }
-    .pulse-badge { animation: pulse-ring 2s infinite; }
+    .custom-pin:active { cursor: grabbing; }
+    .custom-pin span {
+      transform: rotate(45deg);
+      font-weight: 900;
+      font-size: 14px;
+      color: #ffffff;
+    }
+    .pin-active {
+      animation: pulse-ring 1.5s infinite;
+    }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.85); }
+      70% { box-shadow: 0 0 0 16px rgba(99, 102, 241, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+    .traveler-avatar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 9999px;
+      background: linear-gradient(135deg, #6366f1, #ec4899);
+      border: 3px solid #fff;
+      box-shadow: 0 10px 25px rgba(236, 72, 153, 0.7);
+      font-size: 22px;
+    }
+    .route-time-badge {
+      background: rgba(15, 23, 42, 0.94) !important;
+      color: #fde047 !important;
+      border: 1.5px solid #6366f1 !important;
+      border-radius: 9999px !important;
+      padding: 3px 10px !important;
+      font-weight: 800 !important;
+      font-size: 12px !important;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.45) !important;
+      white-space: nowrap !important;
+    }
+    .leaflet-popup-content-wrapper {
+      background: #1e293b !important;
+      color: #f8fafc !important;
+      border-radius: 14px !important;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .leaflet-popup-tip { background: #1e293b !important; }
   </style>
 </head>
 <body>
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef, useMemo, useCallback } = React;
-
-    // ============================================================================
-    // 1. 카테고리 시스템 (색상, 아이콘, 자동 감지 키워드)
-    // ============================================================================
-    const CATEGORY_LIST = [
-      { id: "hotel", label: "🏨 숙소·호텔", color: "#8b5cf6", bgClass: "bg-violet-500/20 text-violet-300 border-violet-500/40", keywords: ["호텔", "숙소", "료칸", "게스트하우스", "민박", "리조트", "아마넥", "토요코인", "도미인", "아파", "소테츠", "칸데오", "그레이서리", "미츠이", "다이와", "힐튼", "메리어트", "하얏트", "스위소텔", "온야도", "노노", "베셀", "몬트레이", "프린스", "hotel", "inn", "ryokan", "hostel", "resort", "amanek", "apa ", "toyoko", "dormy", "ホテル", "旅館"] },
-      { id: "food", label: "🍜 맛집·식당", color: "#f59e0b", bgClass: "bg-amber-500/20 text-amber-300 border-amber-500/40", keywords: ["맛집", "식당", "라멘", "이치란", "스시", "초밥", "규카츠", "야키니쿠", "타코야키", "오코노미야키", "우동", "소바", "돈카츠", "돈까스", "모츠나베", "쿠시카츠", "다루마", "카니도라쿠", "킨류", "즈와이가니", "장어", "우나기", "카레", "식사", "레스토랑", "ramen", "sushi", "yakiniku", "restaurant", "ichiran", "gyukatsu", "うどん", "ラーメン", "寿司", "焼肉", "食堂"] },
-      { id: "cafe", label: "☕ 카페·디저트", color: "#ec4899", bgClass: "bg-pink-500/20 text-pink-300 border-pink-500/40", keywords: ["카페", "커피", "디저트", "베이커리", "빵집", "스타벅스", "도토루", "코메다", "블루보틀", "아이스크림", "파르페", "케이크", "푸딩", "당고", "말차", "녹차", "리쿠로", "홉슈크림", "cafe", "coffee", "bakery", "dessert", "starbucks", "カフェ", "珈琲", "スイーツ"] },
-      { id: "sight", label: "📸 명소·포토존", color: "#06b6d4", bgClass: "bg-cyan-500/20 text-cyan-300 border-cyan-500/40", keywords: ["명소", "포토존", "글리코", "도톤보리", "오사카성", "천수각", "츠텐카쿠", "신세카이", "우메다 공중정원", "공중정원", "하루카스", "전망대", "청수사", "기요미즈데라", "후시미이나리", "아라시야마", "금각사", "은각사", "니조성", "사슴공원", "도다이지", "타워", "신사", "절", "사찰", "공원", "강", "다리", "해변", "케이블카", "관람차", "castle", "tower", "shrine", "temple", "park", "observatory", "dotonbori", "성", "城", "神社", "寺"] },
-      { id: "shop", label: "🛍️ 쇼핑·드럭스토어", color: "#10b981", bgClass: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40", keywords: ["쇼핑", "드럭스토어", "돈키호테", "백화점", "아울렛", "면세점", "파르코", "다이마루", "다카시마야", "한큐", "한신", "마츠모토", "키요시", "다이코쿠", "선드럭", "츠루하", "빅카메라", "요도바시", "유니클로", "무인양품", "무지", "러쉬", "꼼데가르송", "구로몬", "시장", "상점가", "신사이바시", "아메무라", "오렌지스트리트", "린쿠", "도큐핸즈", "로프트", "다이소", "세리아", "포켓몬센터", "닌텐도", "키디랜드", "don quijote", "donki", "mall", "department", "outlet", "market", "shopping", "ドン・キホーテ", "百貨店", "市場"] },
-      { id: "theme", label: "🎢 테마파크·액티비티", color: "#d946ef", bgClass: "bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40", keywords: ["테마파크", "유니버설", "usj", "디즈니", "해유관", "카이유칸", "수족관", "아쿠아리움", "동물원", "텐노지 동물원", "레고랜드", "지브리", "팀랩", "크루즈", "유람선", "도톤보리 리버크루즈", "고자부네", "기모노", "카트", "universal", "disney", "aquarium", "zoo", "cruise", "studio", "ユニバーサル", "水族館"] },
-      { id: "transit", label: "✈️ 공항·교통", color: "#3b82f6", bgClass: "bg-blue-500/20 text-blue-300 border-blue-500/40", keywords: ["공항", "국제공항", "간사이", "나리타", "하네다", "이타미", "신치토세", "후쿠오카 공항", "역", "전철", "지하철", "신칸센", "라피트", "하루카", "버스터미널", "터미널", "항구", "페리", "렌터카", "airport", "station", "terminal", "kansai", "namba station", "umeda station", "空港", "駅"] },
-      { id: "onsen", label: "♨️ 온천·휴식", color: "#f43f5e", bgClass: "bg-rose-500/20 text-rose-300 border-rose-500/40", keywords: ["온천", "스파", "대욕장", "소라니와", "스파월드", "노천탕", "아리마", "유후인", "벳푸", "노보리베츠", "하코네", "마사지", "휴식", "onsen", "spa", "bath", "温泉", "スパ"] },
-      { id: "bar", label: "🍺 이자카야·야식", color: "#eab308", bgClass: "bg-yellow-500/20 text-yellow-300 border-yellow-500/40", keywords: ["이자카야", "바", "맥주", "술집", "포차", "야키토리", "꼬치", "토리키조쿠", "하이볼", "나마비루", "야식", "펍", "라운지", "izakaya", "bar", "pub", "beer", "居酒屋", "バー"] },
-      { id: "mart", label: "🏪 편의점·마트", color: "#64748b", bgClass: "bg-slate-500/20 text-slate-300 border-slate-500/40", keywords: ["편의점", "마트", "세븐일레븐", "로손", "패밀리마트", "라이프", "이온몰", "이온", "타마데", "슈퍼", "도시락", "lawson", "familymart", "7-eleven", "supermarket", "mart", "aeon", "コンビニ", "スーパー"] }
-    ];
-
-    function getCategoryMeta(catLabel) {
-      const found = CATEGORY_LIST.find(c => c.label === catLabel);
-      if (found) return found;
-      return {
-        id: "custom",
-        label: catLabel || "📍 기타 장소",
-        color: "#6366f1",
-        bgClass: "bg-indigo-500/20 text-indigo-300 border-indigo-500/40",
-        keywords: []
-      };
-    }
-
-    function detectCategoryFromText(text, types = []) {
-      const lower = String(text || "").toLowerCase();
-      const typeStr = (types || []).join(" ").toLowerCase();
-
-      for (const cat of CATEGORY_LIST) {
-        for (const kw of cat.keywords) {
-          if (lower.includes(kw.toLowerCase())) {
-            return cat.label;
-          }
-        }
-      }
-
-      if (typeStr.includes("lodging") || typeStr.includes("hotel") || typeStr.includes("guest_house") || typeStr.includes("hostel")) return "🏨 숙소·호텔";
-      if (typeStr.includes("airport") || typeStr.includes("train_station") || typeStr.includes("subway_station") || typeStr.includes("transit_station") || typeStr.includes("aeroway") || typeStr.includes("railway")) return "✈️ 공항·교통";
-      if (typeStr.includes("cafe") || typeStr.includes("bakery")) return "☕ 카페·디저트";
-      if (typeStr.includes("bar") || typeStr.includes("night_club") || typeStr.includes("pub")) return "🍺 이자카야·야식";
-      if (typeStr.includes("restaurant") || typeStr.includes("food") || typeStr.includes("meal") || typeStr.includes("fast_food")) return "🍜 맛집·식당";
-      if (typeStr.includes("amusement_park") || typeStr.includes("aquarium") || typeStr.includes("zoo") || typeStr.includes("theme_park")) return "🎢 테마파크·액티비티";
-      if (typeStr.includes("shopping_mall") || typeStr.includes("department_store") || typeStr.includes("store") || typeStr.includes("shop") || typeStr.includes("marketplace")) return "🛍️ 쇼핑·드럭스토어";
-      if (typeStr.includes("spa") || typeStr.includes("hot_spring")) return "♨️ 온천·휴식";
-      if (typeStr.includes("convenience_store") || typeStr.includes("supermarket")) return "🏪 편의점·마트";
-      if (typeStr.includes("tourist_attraction") || typeStr.includes("point_of_interest") || typeStr.includes("place_of_worship") || typeStr.includes("museum") || typeStr.includes("park") || typeStr.includes("tourism")) return "📸 명소·포토존";
-
-      return null;
-    }
-
-    // ============================================================================
-    // 2. 내장 초정밀 인기 여행지 데이터베이스 (한국어/일본어/영어 즉시 매칭)
-    // ============================================================================
-    const CURATED_PLACES_DB = [
-      // 오사카 공항 & 주요 역
-      { name: "간사이 국제공항 (KIX)", aliases: ["간사이공항", "간사이 국제공항", "오사카 공항", "kansai international airport", "関西国際空港", "kix"], category: "✈️ 공항·교통", lat: 34.4320, lng: 135.2304, address: "오사카부 이즈미사노시 센슈쿠코키타 1" },
-      { name: "오사카 이타미 공항 (ITM)", aliases: ["이타미 공항", "오사카 국제공항", "itami airport", "大阪国際空港"], category: "✈️ 공항·교통", lat: 34.7855, lng: 135.4382, address: "오사카부 도요나카시 호타루가이케니시마치 3-555" },
-      { name: "난카이 난바역", aliases: ["난바역", "난카이난바", "라피트 난바", "nankai namba station", "南海難波駅"], category: "✈️ 공항·교통", lat: 34.6644, lng: 135.5018, address: "오사카시 주오구 난바 5-1-60" },
-      { name: "오사카 난바역 (긴테츠·한신)", aliases: ["오사카난바역", "긴테츠 난바", "osaka namba station", "大阪難波駅"], category: "✈️ 공항·교통", lat: 34.6669, lng: 135.4991, address: "오사카시 주오구 난바 4-1-17" },
-      { name: "JR 난바역 (OCAT)", aliases: ["jr난바", "오캣", "ocat", "jr namba station"], category: "✈️ 공항·교통", lat: 34.6669, lng: 135.4952, address: "오사카시 나니와구 미나토마치 1-4-1" },
-      { name: "오사카역 / 우메다역", aliases: ["우메다역", "오사카역", "한큐 우메다", "한신 우메다", "jr오사카", "osaka station", "umeda station", "大阪駅", "梅田駅"], category: "✈️ 공항·교통", lat: 34.7024, lng: 135.4959, address: "오사카시 기타구 우메다 3-1-1" },
-      { name: "신오사카역 (신칸센)", aliases: ["신오사카", "신오사카역", "shin-osaka station", "新大阪駅"], category: "✈️ 공항·교통", lat: 34.7335, lng: 135.5003, address: "오사카시 요도가와구 니시나카지마 5-16-1" },
-      { name: "덴노지역 (하루카·아베노)", aliases: ["덴노지역", "텐노지역", "tennoji station", "天王寺駅"], category: "✈️ 공항·교통", lat: 34.6473, lng: 135.5134, address: "오사카시 덴노지구 히데인으로초" },
-
-      // 오사카 인기 호텔
-      { name: "아마넥 호텔 오사카 난바 (Hotel Amanek Osaka Namba)", aliases: ["아마넥 호텔", "호텔 아마넥 오사카 난바", "아마넥 오사카", "아마넥 난바", "hotel amanek osaka namba", "ホテル アマネク 大阪なんば"], category: "🏨 숙소·호텔", lat: 34.6674727, lng: 135.5039453, address: "오사카시 주오구 소에몬초 7-13 (도톤보리 도보 2분)" },
-      { name: "스위소텔 난카이 오사카 (Swissotel Nankai Osaka)", aliases: ["스위소텔", "스위소텔 난카이", "swissotel nankai osaka", "スイスホテル南海大阪"], category: "🏨 숙소·호텔", lat: 34.6643, lng: 135.5017, address: "오사카시 주오구 난바 5-1-60" },
-      { name: "크로스 호텔 오사카 (Cross Hotel Osaka)", aliases: ["크로스 호텔", "크로스호텔 오사카", "cross hotel osaka", "クロスホテル大阪"], category: "🏨 숙소·호텔", lat: 34.6693, lng: 135.5008, address: "오사카시 주오구 신사이바시스지 2-5-15" },
-      { name: "온야도 노노 난바 내추럴 핫 스프링 (Onyado Nono Namba)", aliases: ["온야도 노노 난바", "온야도노노", "도미인 난바", "onyado nono namba", "御宿野乃なんば"], category: "🏨 숙소·호텔", lat: 34.6669, lng: 135.5059, address: "오사카시 주오구 닛폰바시 1-4-18" },
-      { name: "도미 인 프리미엄 난바 (Dormy Inn Premium Namba)", aliases: ["도미인 프리미엄 난바", "도미인 난바", "dormy inn premium namba", "ドーミーインPREMIUMなんば"], category: "🏨 숙소·호텔", lat: 34.6708, lng: 135.5061, address: "오사카시 주오구 시마노우치 2-14-23" },
-      { name: "소테츠 프레사 인 오사카 난바 (Sotetsu Fresa Inn Osaka Namba)", aliases: ["소테츠 프레사인 난바", "소테츠 난바", "sotetsu fresa inn osaka namba", "相鉄フレッサイン大阪なんば駅前"], category: "🏨 숙소·호텔", lat: 34.6652, lng: 135.5002, address: "오사카시 나니와구 난바나카 1-6-5" },
-      { name: "난바 오리엔탈 호텔 (Namba Oriental Hotel)", aliases: ["난바 오리엔탈", "오리엔탈 호텔 난바", "namba oriental hotel", "なんばオリエンタルホテル"], category: "🏨 숙소·호텔", lat: 34.6661, lng: 135.5034, address: "오사카시 주오구 센니치마에 2-8-17" },
-      { name: "호텔 그레이서리 오사카 난바 (Hotel Gracery Osaka Namba)", aliases: ["호텔 그레이서리 난바", "그레이서리 오사카", "hotel gracery osaka namba", "ホテルグレイスリー大阪なんば"], category: "🏨 숙소·호텔", lat: 34.6663, lng: 135.4969, address: "오사카시 나니와구 모토마치 1-4-4" },
-      { name: "호텔 한큐 레스파이어 오사카 (Hotel Hankyu Respire Osaka)", aliases: ["한큐 레스파이어", "레스파이어 오사카", "hotel hankyu respire osaka", "ホテル阪急レスパイア大阪"], category: "🏨 숙소·호텔", lat: 34.7042, lng: 135.4966, address: "오사카시 기타구 오후카초 1-1" },
-      { name: "아파 호텔 & 리조트 오사카 우메다 에키 타워 (APA Hotel Umeda)", aliases: ["아파호텔 우메다", "아파 호텔 오사카 우메다", "apa hotel osaka umeda eki tower"], category: "🏨 숙소·호텔", lat: 34.7003, lng: 135.5015, address: "오사카시 기타구 소네자키 2-8-32" },
-      { name: "아파 호텔 & 리조트 오사카 난바 에키마에 타워 (APA Hotel Namba)", aliases: ["아파호텔 난바", "아파 호텔 난바 에키마에", "apa hotel osaka namba ekimae tower"], category: "🏨 숙소·호텔", lat: 34.6663, lng: 135.4959, address: "오사카시 나니와구 미나토마치 1-2-13" },
-      { name: "칸데오 호텔 오사카 난바 (Candeo Hotels Osaka Namba)", aliases: ["칸데오 호텔 난바", "칸데오 오사카", "candeo hotels osaka namba", "カンデオホテルズ大阪なんば"], category: "🏨 숙소·호텔", lat: 34.6703, lng: 135.5063, address: "오사카시 주오구 히가시신사이바시 2-2-5" },
-      { name: "호텔 몬트레이 그라스미어 오사카 (Hotel Monterey Grasmere Osaka)", aliases: ["몬트레이 그라스미어", "호텔 몬트레이 오사카", "hotel monterey grasmere osaka"], category: "🏨 숙소·호텔", lat: 34.6668, lng: 135.4953, address: "오사카시 나니와구 미나토마치 1-2-3" },
-      { name: "더 파크 프론트 호텔 앳 유니버설 스튜디오 재팬", aliases: ["파크 프론트 호텔", "유니버설 파크프론트", "the park front hotel at universal studios japan"], category: "🏨 숙소·호텔", lat: 34.6679, lng: 135.4375, address: "오사카시 고노하나구 시마야 6-2-52" },
-
-      // 오사카 명소 & 테마파크
-      { name: "오사카 도톤보리 (글리코상 포토존)", aliases: ["도톤보리", "글리코상", "에비스바시", "도톤보리 글리코상", "dotonbori", "glico sign", "道頓堀", "グリコサイン"], category: "📸 명소·포토존", lat: 34.6687, lng: 135.5013, address: "오사카시 주오구 도톤보리 1-10-2" },
-      { name: "유니버설 스튜디오 재팬 (USJ)", aliases: ["유니버설 스튜디오", "유니버셜 스튜디오", "유니버설 스튜디오 재팬", "usj", "universal studios japan", "ユニバーサル・スタジオ・ジャパン"], category: "🎢 테마파크·액티비티", lat: 34.6654, lng: 135.4323, address: "오사카시 고노하나구 사쿠라지마 2-1-33" },
-      { name: "오사카 성 (천수각)", aliases: ["오사카성", "오사카 성", "천수각", "오사카성 공원", "osaka castle", "大阪城"], category: "📸 명소·포토존", lat: 34.6873, lng: 135.5262, address: "오사카시 주오구 오사카조 1-1" },
-      { name: "우메다 스카이빌딩 (공중정원 전망대)", aliases: ["우메다 공중정원", "우메다 스카이빌딩", "공중정원 전망대", "umeda sky building", "梅田スカイビル"], category: "📸 명소·포토존", lat: 34.7055, lng: 135.4896, address: "오사카시 기타구 오요도나카 1-1-88" },
-      { name: "아베노 하루카스 300 전망대", aliases: ["하루카스 300", "아베노 하루카스", "하루카스 전망대", "harukas 300", "あべのハルカス"], category: "📸 명소·포토존", lat: 34.6459, lng: 135.5142, address: "오사카시 아베노구 아베노스지 1-1-43" },
-      { name: "츠텐카쿠 & 신세카이", aliases: ["츠텐카쿠", "신세카이", "통천각", "tsutenkaku", "shinsekai", "通天閣", "新世界"], category: "📸 명소·포토존", lat: 34.6525, lng: 135.5063, address: "오사카시 나니와구 에비스히가시 1-18-6" },
-      { name: "햅파이브 관람차 (HEP FIVE)", aliases: ["햅파이브", "헵파이브", "우메다 관람차", "hep five", "ヘップファイブ"], category: "📸 명소·포토존", lat: 34.7040, lng: 135.5003, address: "오사카시 기타구 가쿠다초 5-15" },
-      { name: "오사카 해유관 (카이유칸 수족관)", aliases: ["해유관", "카이유칸", "오사카 수족관", "kaiyukan", "osaka aquarium", "海遊館"], category: "🎢 테마파크·액티비티", lat: 34.6545, lng: 135.4290, address: "오사카시 미나토구 가이간도리 1-1-10" },
-      { name: "덴포잔 대관람차", aliases: ["덴포잔 관람차", "덴포잔 대관람차", "tempozan ferris wheel", "天保山大観覧車"], category: "📸 명소·포토존", lat: 34.6563, lng: 135.4310, address: "오사카시 미나토구 가이간도리 1-1-10" },
-      { name: "도톤보리 리버크루즈 (선착장)", aliases: ["도톤보리 리버크루즈", "톤보리 리버크루즈", "tombori river cruise", "とんぼりリバークルーズ"], category: "🎢 테마파크·액티비티", lat: 34.6691, lng: 135.5023, address: "오사카시 주오구 소에몬초 7-13 (돈키호테 앞)" },
-      { name: "나카노시마 공원 & 중앙공회당", aliases: ["나카노시마", "나카노시마 공원", "nakanoshima park", "中之島公園"], category: "📸 명소·포토존", lat: 34.6926, lng: 135.5065, address: "오사카시 기타구 나카노시마 1" },
-      { name: "난바 야사카 신사 (사자머리 신사)", aliases: ["난바 야사카 신사", "야사카 신사 오사카", "사자신사", "namba yasaka shrine", "難波八阪神社"], category: "📸 명소·포토존", lat: 34.6614, lng: 135.4966, address: "오사카시 나니와구 모토마치 2-9-19" },
-      { name: "스미요시 타이샤 (신사)", aliases: ["스미요시 타이샤", "스미요시 신사", "sumiyoshi taisha", "住吉大社"], category: "📸 명소·포토존", lat: 34.6126, lng: 135.4933, address: "오사카시 스미요시구 스미요시 2-9-89" },
-      { name: "소라니와 온천 (오사카 베이타워)", aliases: ["소라니와 온천", "소라니와", "soraniwa onsen", "空庭温泉"], category: "♨️ 온천·휴식", lat: 34.6689, lng: 135.4608, address: "오사카시 미나토구 벤텐 1-2-3" },
-      { name: "스파월드 (신세카이 온천)", aliases: ["스파월드", "오사카 스파월드", "spa world", "スパワールド"], category: "♨️ 온천·휴식", lat: 34.6489, lng: 135.5060, address: "오사카시 나니와구 에비스히가시 3-4-24" },
-
-      // 오사카 맛집 & 카페
-      { name: "이치란 라멘 도톤보리점 본관", aliases: ["이치란 라멘", "이치란 도톤보리", "이치란라멘", "ichiran dotonbori", "一蘭 道頓堀店本館"], category: "🍜 맛집·식당", lat: 34.6691, lng: 135.5031, address: "오사카시 주오구 소에몬초 7-18" },
-      { name: "이치란 라멘 도톤보리점 별관", aliases: ["이치란 별관", "이치란 도톤보리 별관", "ichiran dotonbori south"], category: "🍜 맛집·식당", lat: 34.6682, lng: 135.5026, address: "오사카시 주오구 도톤보리 1-4-16" },
-      { name: "모토무라 규카츠 난바점", aliases: ["모토무라 규카츠", "규카츠 모토무라", "난바 규카츠", "gyukatsu motomura namba", "牛かつもと村 難波店"], category: "🍜 맛집·식당", lat: 34.6665, lng: 135.5023, address: "오사카시 주오구 난바 3-3-1" },
-      { name: "쿠시카츠 다루마 도톤보리점", aliases: ["쿠시카츠 다루마", "다루마 도톤보리", "kushikatsu daruma dotonbori", "串かつだるま 道頓堀店"], category: "🍜 맛집·식당", lat: 34.6685, lng: 135.5033, address: "오사카시 주오구 도톤보리 1-6-8" },
-      { name: "카니도라쿠 도톤보리 본점 (대게 요리)", aliases: ["카니도라쿠", "가니도라쿠", "도톤보리 대게", "kani doraku dotonbori", "かに道楽 道頓堀本店"], category: "🍜 맛집·식당", lat: 34.6687, lng: 135.5016, address: "오사카시 주오구 도톤보리 1-6-18" },
-      { name: "킨류 라멘 도톤보리점 (용 라멘)", aliases: ["킨류 라멘", "금룡 라멘", "킨류라멘", "kinryu ramen", "金龍ラーメン 道頓堀店"], category: "🍜 맛집·식당", lat: 34.6685, lng: 135.5038, address: "오사카시 주오구 도톤보리 1-7-26" },
-      { name: "미즈노 (오코노미야키 맛집)", aliases: ["미즈노", "도톤보리 미즈노", "오코노미야키 미즈노", "mizuno okonomiyaki", "美津の"], category: "🍜 맛집·식당", lat: 34.6683, lng: 135.5031, address: "오사카시 주오구 도톤보리 1-4-15" },
-      { name: "치보 도톤보리점 (오코노미야키)", aliases: ["치보", "치보 오코노미야키", "chibo dotonbori", "千房 道頓堀ビル店"], category: "🍜 맛집·식당", lat: 34.6686, lng: 135.5028, address: "오사카시 주오구 도톤보리 1-5-5" },
-      { name: "앗치치 혼포 도톤보리점 (타코야키)", aliases: ["앗치치혼포", "앗치치 혼포", "도톤보리 타코야키", "acchichi honpo", "あっちち本舗 道頓堀店"], category: "🍜 맛집·식당", lat: 34.6690, lng: 135.5028, address: "오사카시 주오구 소에몬초 7-19" },
-      { name: "하루코마 스시 본점 (텐진바시)", aliases: ["하루코마", "하루코마 스시", "harukoma sushi", "春駒 本店"], category: "🍜 맛집·식당", lat: 34.7061, lng: 135.5115, address: "오사카시 기타구 텐진바시 5-5-2" },
-      { name: "우오신 스시 우메다점", aliases: ["우오신 스시", "우오신", "uoshin sushi", "魚心 本店"], category: "🍜 맛집·식당", lat: 34.7029, lng: 135.5036, address: "오사카시 기타구 도야마초 1-1" },
-      { name: "동양정 (토요테이 함박스테이크 우메다 한큐)", aliases: ["동양정", "토요테이", "한큐 동양정", "toyotei umeda", "グリルキャピタル東洋亭 阪急うめだ本店"], category: "🍜 맛집·식당", lat: 34.7024, lng: 135.4986, address: "오사카시 기타구 가쿠다초 8-7 한큐백화점 12층" },
-      { name: "리쿠로 오지상 치즈케이크 난바 본점", aliases: ["리쿠로 오지상", "리쿠로오지상", "치즈케이크 난바", "rikuro ojisan namba", "りくろーおじさんの店 なんば本店"], category: "☕ 카페·디저트", lat: 34.6667, lng: 135.5017, address: "오사카시 주오구 난바 3-2-28" },
-      { name: "홉슈크림 난바 시티점", aliases: ["홉슈크림", "난바 홉슈크림", "hop chou a la creme"], category: "☕ 카페·디저트", lat: 34.6657, lng: 135.5022, address: "오사카시 주오구 난바 3-2-26" },
-
-      // 오사카 쇼핑
-      { name: "돈키호테 도톤보리점 (관람차 매장)", aliases: ["돈키호테 도톤보리", "돈키호테", "도톤보리 돈키호테", "don quijote dotonbori", "ドン・キホーテ 道頓堀店"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6690, lng: 135.5022, address: "오사카시 주오구 소에몬초 7-13" },
-      { name: "메가 돈키호테 신세카이점", aliases: ["메가 돈키호테", "메가돈키호테 신세카이", "돈키호테 신세카이", "mega don quijote shinsekai", "MEGAドン・キホーテ 新世界店"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6491, lng: 135.5042, address: "오사카시 나니와구 에비스니시 3-4-36" },
-      { name: "돈키호테 우메다 본점", aliases: ["돈키호테 우메다", "우메다 돈키호테", "don quijote umeda", "ドン・キホーテ 梅田本店"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.7031, lng: 135.5021, address: "오사카시 기타구 고마쓰바라초 4-16" },
-      { name: "구로몬 시장", aliases: ["구로몬 시장", "구로몬시장", "오사카 시장", "kuromon market", "黒門市場"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6655, lng: 135.5065, address: "오사카시 주오구 닛폰바시 2-4-1" },
-      { name: "신사이바시스지 상점가", aliases: ["신사이바시", "신사이바시 상점가", "shinsaibashi", "心斎橋筋商店街"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6723, lng: 135.5013, address: "오사카시 주오구 신사이바시스지 2-2-22" },
-      { name: "신사이바시 파르코 & 다이마루 백화점", aliases: ["신사이바시 파르코", "다이마루 신사이바시", "파르코 백화점", "shinsaibashi parco", "daimaru shinsaibashi"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6736, lng: 135.5011, address: "오사카시 주오구 신사이바시스지 1-8-3" },
-      { name: "난바 파크스 (Namba Parks)", aliases: ["난바 파크스", "난바파크스", "namba parks", "なんばパークス"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6616, lng: 135.5019, address: "오사카시 나니와구 난바나카 2-10-70" },
-      { name: "다카시마야 백화점 오사카점 (난바)", aliases: ["다카시마야", "난바 다카시마야", "takashimaya osaka", "高島屋 大阪店"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6645, lng: 135.5014, address: "오사카시 주오구 난바 5-1-5" },
-      { name: "한큐 백화점 우메다 본점", aliases: ["한큐 백화점", "우메다 한큐", "한큐백화점", "hankyu department store umeda", "阪急うめだ本店"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.7024, lng: 135.4986, address: "오사카시 기타구 가쿠다초 8-7" },
-      { name: "그랜드 프론트 오사카 (우메다)", aliases: ["그랜드 프론트 오사카", "그랜드프론트", "grand front osaka", "グランフロント大阪"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.7058, lng: 135.4945, address: "오사카시 기타구 오후카초 4-20" },
-      { name: "오렌지 스트리트 (미나미호리에)", aliases: ["오렌지 스트리트", "오렌지스트리트", "호리에", "orange street osaka", "オレンジストリート"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.6713, lng: 135.4944, address: "오사카시 니시구 미나미호리에 1" },
-      { name: "린쿠 프리미엄 아울렛 (간사이공항 인근)", aliases: ["린쿠 아울렛", "린쿠 프리미엄 아울렛", "린쿠타운", "rinku premium outlets", "りんくうプレミアム・アウトレット"], category: "🛍️ 쇼핑·드럭스토어", lat: 34.4063, lng: 135.2938, address: "오사카부 이즈미사노시 린쿠오라이미나미 3-28" },
-
-      // 교토 · 나라 · 고베 주요 명소
-      { name: "교토역 (JR 교토역)", aliases: ["교토역", "jr교토역", "kyoto station", "京都駅"], category: "✈️ 공항·교통", lat: 34.9858, lng: 135.7588, address: "교토시 시모교구 히가시시오코지초" },
-      { name: "교토 가와라마치역 (한큐)", aliases: ["가와라마치역", "교토 가와라마치", "kawaramachi station", "京都河原町駅"], category: "✈️ 공항·교통", lat: 35.0037, lng: 135.7695, address: "교토시 시모교구 시조도리 가와라마치" },
-      { name: "청수사 (기요미즈데라)", aliases: ["청수사", "기요미즈데라", "산넨자카", "니넨자카", "kiyomizu-dera", "清水寺"], category: "📸 명소·포토존", lat: 34.9949, lng: 135.7850, address: "교토시 히가시야마구 기요미즈 1-294" },
-      { name: "후시미 이나리 신사 (여우신사)", aliases: ["후시미 이나리", "후시미이나리", "여우신사", "센본토리이", "fushimi inari taisha", "伏見稲荷大社"], category: "📸 명소·포토존", lat: 34.9671, lng: 135.7727, address: "교토시 후시미구 후카쿠사 야부노우치초 68" },
-      { name: "아라시야마 대나무숲 (치쿠린 & 도게츠교)", aliases: ["아라시야마", "치쿠린", "대나무숲", "도게츠교", "arashiyama bamboo grove", "嵐山", "竹林の小径"], category: "📸 명소·포토존", lat: 35.0168, lng: 135.6713, address: "교토시 우쿄구 사가오구라야마 다부치야마초" },
-      { name: "금각사 (킨카쿠지)", aliases: ["금각사", "킨카쿠지", "kinkaku-ji", "金閣寺"], category: "📸 명소·포토존", lat: 35.0394, lng: 135.7292, address: "교토시 기타구 킨카쿠지초 1" },
-      { name: "은각사 (긴카쿠지)", aliases: ["은각사", "긴카쿠지", "ginkaku-ji", "銀閣寺"], category: "📸 명소·포토존", lat: 35.0270, lng: 135.7982, address: "교토시 사쿄구 긴카쿠지초 2" },
-      { name: "니조성 (교토)", aliases: ["니조성", "nijo castle", "二条城"], category: "📸 명소·포토존", lat: 35.0142, lng: 135.7482, address: "교토시 나카교구 니조조초 541" },
-      { name: "기온 거리 & 하나미코지", aliases: ["기온", "기온거리", "하나미코지", "gion", "hanamikoji", "祇園"], category: "📸 명소·포토존", lat: 35.0037, lng: 135.7755, address: "교토시 히가시야마구 기온마치 미나미가와" },
-      { name: "니시키 시장 (교토 부엌)", aliases: ["니시키 시장", "니시키시장", "nishiki market", "錦市場"], category: "🛍️ 쇼핑·드럭스토어", lat: 35.0050, lng: 135.7649, address: "교토시 나카교구 니시키코지도리" },
-      { name: "나라 공원 (사슴공원) & 도다이지", aliases: ["나라 공원", "사슴공원", "나라 사슴공원", "도다이지", "동대사", "nara park", "todai-ji", "奈良公園", "東大寺"], category: "📸 명소·포토존", lat: 34.6851, lng: 135.8430, address: "나라현 나라시 조시초 406-1" },
-      { name: "고베 하버랜드 (모자이크 & 포트타워)", aliases: ["고베 하버랜드", "하버랜드", "고베 모자이크", "고베 포트타워", "kobe harborland", "神戸ハーバーランド"], category: "📸 명소·포토존", lat: 34.6790, lng: 135.1865, address: "효고현 고베시 주오구 히가시카와사키초 1" },
-      { name: "아리마 온천 (고베)", aliases: ["아리마 온천", "아리마온천", "arima onsen", "有馬温泉"], category: "♨️ 온천·휴식", lat: 34.7967, lng: 135.2478, address: "효고현 고베시 기타구 아리마초" },
-
-      // 도쿄 · 후쿠오카 주요 스팟
-      { name: "도쿄 타워", aliases: ["도쿄타워", "도쿄 타워", "tokyo tower", "東京タワー"], category: "📸 명소·포토존", lat: 35.6586, lng: 139.7454, address: "도쿄도 미나토구 시바코엔 4-2-8" },
-      { name: "시부야 스카이 (SHIBUYA SKY)", aliases: ["시부야 스카이", "시부야 스크램블", "shibuya sky", "渋谷スカイ"], category: "📸 명소·포토존", lat: 35.6585, lng: 139.7022, address: "도쿄도 시부야구 시부야 2-24-12" },
-      { name: "아사쿠사 센소지", aliases: ["아사쿠사", "센소지", "가미나리몬", "senso-ji", "asakusa", "浅草寺"], category: "📸 명소·포토존", lat: 35.7148, lng: 139.7967, address: "도쿄도 다이토구 아사쿠사 2-3-1" },
-      { name: "도쿄 디즈니랜드 & 디즈니씨", aliases: ["도쿄 디즈니랜드", "디즈니씨", "도쿄 디즈니", "tokyo disneyland", "tokyo disneysea"], category: "🎢 테마파크·액티비티", lat: 35.6329, lng: 139.8804, address: "지바현 우라야스시 마이하마 1-1" },
-      { name: "하카타역 (후쿠오카)", aliases: ["하카타역", "하카타", "hakata station", "博多駅"], category: "✈️ 공항·교통", lat: 33.5902, lng: 130.4207, address: "후쿠오카시 하카타구 하카타에키추오가이 1-1" },
-      { name: "캐널시티 하카타", aliases: ["캐널시티", "캐널시티 하카타", "canal city hakata", "キャナルシティ博多"], category: "🛍️ 쇼핑·드럭스토어", lat: 33.5898, lng: 130.4108, address: "후쿠오카시 하카타구 스미요시 1-2" }
-    ];
+    const { useState, useEffect, useRef, useMemo } = React;
 
     const PRESET_PLACES = [
-      { name: "간사이 국제공항 (KIX)", category: "✈️ 공항·교통", lat: 34.4320, lng: 135.2304, address: "오사카부 이즈미사노시 센슈쿠코키타 1" },
-      { name: "아마넥 호텔 오사카 난바", category: "🏨 숙소·호텔", lat: 34.6674727, lng: 135.5039453, address: "오사카시 주오구 소에몬초 7-13" },
-      { name: "오사카 도톤보리 (글리코상)", category: "📸 명소·포토존", lat: 34.6687, lng: 135.5013, address: "오사카시 주오구 도톤보리 1-10-2" },
-      { name: "이치란 라멘 도톤보리점", category: "🍜 맛집·식당", lat: 34.6691, lng: 135.5031, address: "오사카시 주오구 소에몬초 7-18" },
-      { name: "돈키호테 도톤보리점", category: "🛍️ 쇼핑·드럭스토어", lat: 34.6690, lng: 135.5022, address: "오사카시 주오구 소에몬초 7-13" },
-      { name: "유니버설 스튜디오 재팬 (USJ)", category: "🎢 테마파크·액티비티", lat: 34.6654, lng: 135.4323, address: "오사카시 고노하나구 사쿠라지마 2-1-33" },
-      { name: "오사카 성 (천수각)", category: "📸 명소·포토존", lat: 34.6873, lng: 135.5262, address: "오사카시 주오구 오사카조 1-1" },
-      { name: "우메다 공중정원 전망대", category: "📸 명소·포토존", lat: 34.7055, lng: 135.4896, address: "오사카시 기타구 오요도나카 1-1-88" },
-      { name: "청수사 (기요미즈데라)", category: "📸 명소·포토존", lat: 34.9949, lng: 135.7850, address: "교토시 히가시야마구 기요미즈 1-294" }
+      { name: "호텔 아마넥 오사카 난바", category: "🏨 숙소·호텔", lat: 34.6674727, lng: 135.5039453, address: "오사카 주오구 니시신사이바시 2-6-10" },
+      { name: "간사이 국제공항", category: "✈️ 공항·교통", lat: 34.4320, lng: 135.2304, address: "오사카 이즈미사노시" },
+      { name: "오사카 도톤보리 (글리코상)", category: "📸 명소·포토존", lat: 34.6687, lng: 135.5013, address: "오사카 주오구 도톤보리" },
+      { name: "이치란 라멘 도톤보리점", category: "🍜 맛집", lat: 34.6691, lng: 135.5031, address: "오사카 주오구 소에몬초 7-18" },
+      { name: "돈키호테 도톤보리점", category: "🛍️ 쇼핑·드럭스토어", lat: 34.6690, lng: 135.5022, address: "오사카 주오구 소에몬초 7-13" },
+      { name: "유니버설 스튜디오 재팬 (USJ)", category: "🎢 테마파크", lat: 34.6654, lng: 135.4323, address: "오사카 고노하나구 사쿠라지마" },
+      { name: "우메다 스카이빌딩 공중정원", category: "🌃 전망대·야경", lat: 34.7055, lng: 135.4896, address: "오사카 기타구 오요도나카" }
     ];
 
     const DEFAULT_SAMPLE_PINS = [
       {
         id: "pin-101",
+        name: "호텔 아마넥 오사카 난바",
+        category: "🏨 숙소·호텔",
+        address: "오사카 주오구 니시신사이바시 2-6-10",
+        lat: 34.6674727,
+        lng: 135.5039453,
+        completed: false,
+        memo: "체크인 전 짐 보관 가능! 도톤보리까지 도보 5분 거리.",
+        customTransitMinutes: null,
+        items: [{ id: "it-0", title: "숙소 숙박비", price: 180000, yen: 20000, bought: true }]
+      },
+      {
+        id: "pin-102",
         name: "오사카 도톤보리 (글리코상)",
         category: "📸 명소·포토존",
-        day: 1,
         address: "오사카 주오구 도톤보리",
         lat: 34.6687,
         lng: 135.5013,
         completed: false,
-        memo: "",
+        memo: "에비스바시 다리 위에서 인증샷 찍기!",
         customTransitMinutes: null,
-        items: []
+        items: [{ id: "it-1", title: "타코야키 간식", price: 8500, yen: 950, bought: false }]
+      },
+      {
+        id: "pin-103",
+        name: "이치란 라멘 도톤보리점",
+        category: "🍜 맛집",
+        address: "오사카 주오구 소에몬초 7-18",
+        lat: 34.6691,
+        lng: 135.5031,
+        completed: false,
+        memo: "반숙 계란 + 차슈 추가 필수!",
+        customTransitMinutes: null,
+        items: [{ id: "it-2", title: "돈코츠 라멘 2인", price: 25000, yen: 2780, bought: false }]
       }
     ];
 
-    // ============================================================================
-    // 3. 한국어 -> 영어/일본어 지명 변환 사전 + 실시간 번역 브릿지
-    // ============================================================================
-    const KO_TO_LOCAL_DICT = [
-      ["아마넥", "Amanek", "アマネク"],
-      ["도톤보리", "Dotonbori", "道頓堀"],
-      ["난바", "Namba", "難波"],
-      ["신사이바시", "Shinsaibashi", "心斎橋"],
-      ["우메다", "Umeda", "梅田"],
-      ["오사카", "Osaka", "大阪"],
-      ["교토", "Kyoto", "京都"],
-      ["고베", "Kobe", "神戸"],
-      ["나라", "Nara", "奈良"],
-      ["도쿄", "Tokyo", "東京"],
-      ["후쿠오카", "Fukuoka", "福岡"],
-      ["하카타", "Hakata", "博多"],
-      ["텐진", "Tenjin", "天神"],
-      ["삿포로", "Sapporo", "札幌"],
-      ["오키나와", "Okinawa", "沖縄"],
-      ["나고야", "Nagoya", "名古屋"],
-      ["신주쿠", "Shinjuku", "新宿"],
-      ["시부야", "Shibuya", "渋谷"],
-      ["긴자", "Ginza", "銀座"],
-      ["아사쿠사", "Asakusa", "浅草"],
-      ["우에노", "Ueno", "上野"],
-      ["아키하바라", "Akihabara", "秋葉原"],
-      ["롯폰기", "Roppongi", "六本木"],
-      ["덴노지", "Tennoji", "天王寺"],
-      ["텐노지", "Tennoji", "天王寺"],
-      ["신세카이", "Shinsekai", "新世界"],
-      ["구로몬", "Kuromon", "黒門"],
-      ["닛폰바시", "Nipponbashi", "日本橋"],
-      ["가와라마치", "Kawaramachi", "河原町"],
-      ["기온", "Gion", "祇園"],
-      ["아라시야마", "Arashiyama", "嵐山"],
-      ["이치란", "Ichiran", "一蘭"],
-      ["돈키호테", "Don Quijote", "ドン・キホーテ"],
-      ["유니버설", "Universal Studios Japan", "ユニバーサル"],
-      ["간사이", "Kansai", "関西"],
-      ["토요코인", "Toyoko Inn", "東横INN"],
-      ["도미인", "Dormy Inn", "ドーミーイン"],
-      ["아파호텔", "APA Hotel", "アパホテル"],
-      ["아파 호텔", "APA Hotel", "アパホテル"],
-      ["소테츠", "Sotetsu Fresa Inn", "相鉄フレッサイン"],
-      ["칸데오", "Candeo Hotels", "カンデオホテルズ"],
-      ["그레이서리", "Hotel Gracery", "ホテルグレイスリー"],
-      ["온야도 노노", "Onyado Nono", "御宿野乃"],
-      ["스위소텔", "Swissotel", "スイスホテル"],
-      ["크로스 호텔", "Cross Hotel", "クロスホテル"],
-      ["한큐", "Hankyu", "阪急"],
-      ["한신", "Hanshin", "阪神"],
-      ["다이마루", "Daimaru", "大丸"],
-      ["다카시마야", "Takashimaya", "高島屋"],
-      ["파르코", "PARCO", "パルコ"],
-      ["호텔", "Hotel", "ホテル"],
-      ["료칸", "Ryokan", "旅館"],
-      ["공항", "Airport", "空港"],
-      ["라멘", "Ramen", "ラーメン"],
-      ["스시", "Sushi", "寿司"],
-      ["규카츠", "Gyukatsu", "牛かつ"],
-      ["타코야키", "Takoyaki", "たこ焼き"],
-      ["오코노미야키", "Okonomiyaki", "お好み焼き"],
-      ["야키니쿠", "Yakiniku", "焼肉"],
-      ["우동", "Udon", "うどん"],
-      ["시장", "Market", "市場"],
-      ["신사", "Shrine", "神社"],
-      ["성", "Castle", "城"],
-      ["역", "Station", "駅"]
-    ];
-
-    function buildLocalQueryVariants(rawQuery) {
-      const q = rawQuery.trim();
-      const variants = new Set([q]);
-
-      let enVariant = q;
-      let jaVariant = q;
-      let changed = false;
-
-      for (const [ko, en, ja] of KO_TO_LOCAL_DICT) {
-        if (q.includes(ko)) {
-          enVariant = enVariant.replaceAll(ko, " " + en + " ");
-          jaVariant = jaVariant.replaceAll(ko, " " + ja + " ");
-          changed = true;
-        }
-      }
-
-      if (changed) {
-        variants.add(enVariant.replace(/\s+/g, " ").trim());
-        variants.add(jaVariant.replace(/\s+/g, " ").trim());
-      }
-      return Array.from(variants);
-    }
-
-    async function translateQueryToJaAndEn(query) {
-      const results = [];
-      try {
-        const hasKorean = /[가-힣]/.test(query);
-        if (!hasKorean) return results;
-
-        const [jaRes, enRes] = await Promise.allSettled([
-          fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=ja&dt=t&q=${encodeURIComponent(query)}`).then(r => r.json()),
-          fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=en&dt=t&q=${encodeURIComponent(query)}`).then(r => r.json())
-        ]);
-
-        if (jaRes.status === "fulfilled" && jaRes.value?.[0]?.[0]?.[0]) {
-          results.push(jaRes.value[0].map(x => x[0]).join(""));
-        }
-        if (enRes.status === "fulfilled" && enRes.value?.[0]?.[0]?.[0]) {
-          results.push(enRes.value[0].map(x => x[0]).join(""));
-        }
-      } catch (err) {}
-      return results;
-    }
-
-    // ============================================================================
-    // 4. 초정밀 구글 지도 URL & 단축 링크(maps.app.goo.gl) 해독기
-    // ============================================================================
-    function extractInfoFromGoogleUrlOrHtml(rawStr) {
-      if (!rawStr) return { lat: null, lng: null, name: null, placeId: null };
-      let text = String(rawStr);
-
-      let lat = null;
-      let lng = null;
-      let name = null;
-      let placeId = null;
-
-      // 1) URL 내 /place/이름 또는 /search/이름 추출
-      const placeMatches = [...text.matchAll(/\/(?:place|search)\/([^/@?&#"'\s]+)/g)];
-      if (placeMatches.length > 0) {
-        for (const m of placeMatches) {
-          try {
-            const decoded = decodeURIComponent(m[1].replace(/\+/g, " ")).trim();
-            if (decoded && !/^[-0-9.,\s]+$/.test(decoded) && !decoded.startsWith("data=")) {
-              name = decoded;
-              break;
-            }
-          } catch (e) {}
-        }
-      }
-
-      // 2) HTML 내 og:title 또는 <title>에서 장소명 추출
-      if (!name) {
-        const ogTitleMatch = text.match(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i) ||
-                             text.match(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
-        if (ogTitleMatch && ogTitleMatch[1]) {
-          const rawTitle = ogTitleMatch[1].split("·")[0].replace(/\s*-\s*Google\s*(Maps|지도).*/i, "").trim();
-          if (rawTitle && rawTitle !== "Google Maps" && rawTitle !== "Google 지도") {
-            name = rawTitle;
-          }
-        }
-      }
-
-      // 3) URL 쿼리 파라미터 q= 또는 query= 에서 이름 또는 좌표 추출
-      const queryParamMatch = text.match(/[?&](?:q|query)=([^&#"'\s]+)/i);
-      if (queryParamMatch) {
-        try {
-          const decodedQ = decodeURIComponent(queryParamMatch[1].replace(/\+/g, " ")).trim();
-          const coordInQ = decodedQ.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
-          if (coordInQ) {
-            lat = parseFloat(coordInQ[1]);
-            lng = parseFloat(coordInQ[2]);
-          } else if (!name && decodedQ) {
-            name = decodedQ;
-          }
-        } catch (e) {}
-      }
-
-      // 4) 가장 정확한 실제 핀 좌표: !3d(위도)!4d(경도) - 여러 개가 있을 경우 가장 마지막 항목이 실제 선택된 핀!
-      const exactMatches = [...text.matchAll(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/g)];
-      if (exactMatches.length > 0) {
-        const lastExact = exactMatches[exactMatches.length - 1];
-        lat = parseFloat(lastExact[1]);
-        lng = parseFloat(lastExact[2]);
-      }
-
-      // 5) HTML og:image 의 staticmap center=위도,경도 또는 markers=위도,경도 추출
-      if (lat === null || lng === null) {
-        const staticMapMatch = text.match(/staticmap\?[^"'\s]*?(?:center|markers)=(-?\d+\.\d+)(?:%2C|,)(-?\d+\.\d+)/i);
-        if (staticMapMatch) {
-          lat = parseFloat(staticMapMatch[1]);
-          lng = parseFloat(staticMapMatch[2]);
-        }
-      }
-
-      // 6) ll=위도,경도 또는 center=위도,경도 또는 destination=위도,경도
-      if (lat === null || lng === null) {
-        const llMatch = text.match(/[?&](?:ll|center|destination|daddr)=(-?\d+\.\d+)(?:%2C|,)(-?\d+\.\d+)/i);
-        if (llMatch) {
-          lat = parseFloat(llMatch[1]);
-          lng = parseFloat(llMatch[2]);
-        }
-      }
-
-      // 7) /@위도,경도 (뷰포트 중심 좌표)
-      if (lat === null || lng === null) {
-        const atMatch = text.match(/\/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-        if (atMatch) {
-          lat = parseFloat(atMatch[1]);
-          lng = parseFloat(atMatch[2]);
-        }
-      }
-
-      // 8) APP_INITIALIZATION_STATE 내 [null,null,위도,경도] 패턴
-      if (lat === null || lng === null) {
-        const initMatch = text.match(/\[null,null,(-?\d+\.\d+),(-?\d+\.\d+)\]/);
-        if (initMatch) {
-          lat = parseFloat(initMatch[1]);
-          lng = parseFloat(initMatch[2]);
-        }
-      }
-
-      // 9) query_place_id 추출
-      const pidMatch = text.match(/[?&](?:query_place_id|place_id)=([A-Za-z0-9_-]+)/);
-      if (pidMatch) {
-        placeId = pidMatch[1];
-      }
-
-      if (lat !== null && (isNaN(lat) || lat < -90 || lat > 90)) lat = null;
-      if (lng !== null && (isNaN(lng) || lng < -180 || lng > 180)) lng = null;
-
-      return { lat, lng, name, placeId };
-    }
-
-    async function resolveGoogleMapsInput(rawInput) {
-      const trimmed = rawInput.trim();
-
-      // 1) 순수 위도,경도 입력 확인 (예: "34.6687, 135.5013")
-      const directCoord = trimmed.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
-      if (directCoord) {
-        return {
-          lat: parseFloat(directCoord[1]),
-          lng: parseFloat(directCoord[2]),
-          name: `좌표 지정 장소 (${parseFloat(directCoord[1]).toFixed(4)}, ${parseFloat(directCoord[2]).toFixed(4)})`,
-          address: `${directCoord[1]}, ${directCoord[2]}`,
-          isUrl: true
-        };
-      }
-
-      // 2) 입력 텍스트 안에 URL이 포함되어 있는지 확인
-      const urlMatch = trimmed.match(/(https?:\/\/[^\s]+)/i);
-      if (!urlMatch && !trimmed.includes("google.com/maps") && !trimmed.includes("goo.gl")) {
-        return { isUrl: false };
-      }
-
-      const targetUrl = urlMatch ? urlMatch[1] : trimmed;
-      const companionText = trimmed.replace(targetUrl, "").replace(/\s+/g, " ").trim();
-
-      // 3) 먼저 긴 URL 자체에서 바로 추출 시도
-      let parsed = extractInfoFromGoogleUrlOrHtml(targetUrl);
-      if (companionText && !parsed.name) {
-        parsed.name = companionText.split("\n")[0].trim();
-      }
-
-      // 4) 단축 URL (maps.app.goo.gl, goo.gl/maps) 이거나 아직 좌표를 못 찾은 경우 다중 프록시로 리다이렉트 추적
-      const isShortUrl = /goo\.gl|maps\.app\.goo\.gl|bit\.ly/i.test(targetUrl);
-      if (isShortUrl || (parsed.lat === null && parsed.lng === null)) {
-        const resolvers = [
-          // 0) Vercel Serverless API (/api/resolve가 배포되어 있는 경우)
-          async () => {
-            const res = await fetch(`/api/resolve?url=${encodeURIComponent(targetUrl)}`);
-            if (!res.ok) throw new Error("local api not present");
-            const data = await res.json();
-            const combined = (data?.finalUrl || "") + "\n" + (data?.html || "");
-            const info = extractInfoFromGoogleUrlOrHtml(combined);
-            if (!info.lat && !info.name) throw new Error("no info");
-            return info;
-          },
-          // 1) AllOrigins JSON (리다이렉트된 최종 URL과 HTML 동시 확보)
-          async () => {
-            const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
-            if (!res.ok) throw new Error("allorigins failed");
-            const data = await res.json();
-            const combined = (data?.status?.url || "") + "\n" + (data?.contents || "");
-            const info = extractInfoFromGoogleUrlOrHtml(combined);
-            if (!info.lat && !info.name) throw new Error("no info");
-            return info;
-          },
-          // 2) Unshorten.me
-          async () => {
-            const res = await fetch(`https://unshorten.me/json/${encodeURIComponent(targetUrl)}`);
-            if (!res.ok) throw new Error("unshorten failed");
-            const data = await res.json();
-            if (!data?.resolved_url) throw new Error("no resolved_url");
-            const info = extractInfoFromGoogleUrlOrHtml(data.resolved_url);
-            if (!info.lat && !info.name) throw new Error("no info");
-            return info;
-          },
-          // 3) CodeTabs Proxy
-          async () => {
-            const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
-            if (!res.ok) throw new Error("codetabs failed");
-            const html = await res.text();
-            const info = extractInfoFromGoogleUrlOrHtml(html);
-            if (!info.lat && !info.name) throw new Error("no info");
-            return info;
-          }
-        ];
-
-        for (const resolver of resolvers) {
-          try {
-            const resolvedInfo = await resolver();
-            if (resolvedInfo.lat !== null && resolvedInfo.lng !== null) {
-              parsed.lat = resolvedInfo.lat;
-              parsed.lng = resolvedInfo.lng;
-            }
-            if (!parsed.name && resolvedInfo.name) {
-              parsed.name = resolvedInfo.name;
-            }
-            if (!parsed.placeId && resolvedInfo.placeId) {
-              parsed.placeId = resolvedInfo.placeId;
-            }
-            if (parsed.lat !== null && parsed.lng !== null) break;
-          } catch (e) {}
-        }
-      }
-
-      return {
-        isUrl: true,
-        lat: parsed.lat,
-        lng: parsed.lng,
-        name: parsed.name || companionText || null,
-        placeId: parsed.placeId || null,
-        rawUrl: targetUrl
-      };
-    }
-
-    // ============================================================================
-    // 5. 거리 & 이동시간 계산 유틸리티
-    // ============================================================================
     function getDistanceKm(lat1, lon1, lat2, lon2) {
       const R = 6371;
       const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -590,34 +180,33 @@
         return {
           distanceKm: distKm.toFixed(2),
           totalMinutes: customM,
-          mode: "⏱️ 직접 지정",
-          formatted: formatMinutesToKorean(customM),
-          isCustom: true
+          mode: "🚇 대중교통 (직접 지정)",
+          formatted: formatMinutesToKorean(customM)
         };
       }
 
       let totalMinutes = 0;
       let mode = "";
-      if (distKm < 0.8) {
-        totalMinutes = Math.max(3, Math.round((distKm / 4.2) * 60) + 1);
+
+      if (distKm < 0.75) {
+        totalMinutes = Math.max(3, Math.round((distKm / 4.0) * 60) + 2);
         mode = "🚶 도보 이동";
       } else if (distKm < 15) {
-        totalMinutes = Math.round(((distKm * 1.3) / 24) * 60 + 7);
-        mode = "🚇 지하철·전철";
+        totalMinutes = Math.round(((distKm * 1.3) / 22) * 60 + 8);
+        mode = "🚇 지하철 · 시내버스";
       } else if (distKm < 65) {
-        totalMinutes = Math.round(((distKm * 1.25) / 45) * 60 + 12);
-        mode = "🚆 특급·공항철도";
+        totalMinutes = Math.round(((distKm * 1.25) / 42) * 60 + 14);
+        mode = "🚆 급행전철 · 공항버스";
       } else {
-        totalMinutes = Math.round((distKm / 120) * 60 + 20);
-        mode = "🚄 신칸센·고속";
+        totalMinutes = Math.round((distKm / 120) * 60 + 25);
+        mode = "🚄 신칸센 · 특급열차";
       }
 
       return {
         distanceKm: distKm.toFixed(1),
         totalMinutes,
         mode,
-        formatted: formatMinutesToKorean(totalMinutes),
-        isCustom: false
+        formatted: formatMinutesToKorean(totalMinutes)
       };
     }
 
@@ -628,644 +217,552 @@
       return "¥" + Math.round(Number(num || 0)).toLocaleString("ja-JP");
     }
 
-    // 구글 지도 테마 스타일 (다크 / 밝은 기본 테마 전환용)
-    const DARK_MAP_STYLE = [
-      { elementType: "geometry", stylers: [{ color: "#1e293b" }] },
-      { elementType: "labels.text.stroke", stylers: [{ color: "#0f172a" }] },
-      { elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] },
-      { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#cbd5e1" }] },
-      { featureType: "road", elementType: "geometry", stylers: [{ color: "#334155" }] },
-      { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#1e293b" }] },
-      { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#cbd5e1" }] },
-      { featureType: "transit", elementType: "geometry", stylers: [{ color: "#475569" }] },
-      { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f172a" }] },
-      { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#64748b" }] }
-    ];
+    // 클라이언트에서도 즉시 구글 긴 링크를 해독하는 함수
+    function parseGoogleMapsUrlClient(rawUrl) {
+      try {
+        const decoded = decodeURIComponent(rawUrl);
+        let name = "구글 지도 공유 장소";
+        const placeMatch = decoded.match(/\/maps\/place\/([^/@?]+)/);
+        if (placeMatch && placeMatch[1]) {
+          name = placeMatch[1].replace(/\+/g, " ").trim();
+        }
 
-    // ============================================================================
-    // 6. 메인 애플리케이션 컴포넌트
-    // ============================================================================
+        let lat = null;
+        let lng = null;
+        const exactMatches = [...decoded.matchAll(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/g)];
+        if (exactMatches.length > 0) {
+          const last = exactMatches[exactMatches.length - 1];
+          lat = parseFloat(last[1]);
+          lng = parseFloat(last[2]);
+        } else {
+          const atMatch =
+            decoded.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) ||
+            decoded.match(/[?&](?:q|ll|center)=(-?\d+\.\d+),(-?\d+\.\d+)/);
+          if (atMatch) {
+            lat = parseFloat(atMatch[1]);
+            lng = parseFloat(atMatch[2]);
+          }
+        }
+
+        if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+          return {
+            name,
+            address: `구글 지도 링크 추출 좌표 (${lat.toFixed(5)}, ${lng.toFixed(5)})`,
+            lat,
+            lng
+          };
+        }
+      } catch (e) {}
+      return null;
+    }
+
     function App() {
       const [pins, setPins] = useState(() => {
-        try {
-          const saved = localStorage.getItem("travel_planner_pins_v10");
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              return parsed.map(p => ({
-                ...p,
-                day: p.day || 1,
-                category: p.category || detectCategoryFromText(p.name) || "📸 명소·포토존",
-                items: Array.isArray(p.items) ? p.items : []
-              }));
-            }
-          }
-        } catch (e) {}
-        return DEFAULT_SAMPLE_PINS;
+        const saved = localStorage.getItem("travel_planner_pins_v11");
+        return saved ? JSON.parse(saved) : DEFAULT_SAMPLE_PINS;
+      });
+      const [tripTitle, setTripTitle] = useState(
+        () => localStorage.getItem("travel_planner_title_v11") || "여행 계획"
+      );
+      const [exchangeRate, setExchangeRate] = useState(
+        () => Number(localStorage.getItem("travel_planner_rate_v11")) || 9.05
+      );
+      const [peopleCount, setPeopleCount] = useState(2);
+      const [activeTab, setActiveTab] = useState("itinerary");
+      const [selectedPinId, setSelectedPinId] = useState(() => {
+        const saved = localStorage.getItem("travel_planner_pins_v11");
+        const parsed = saved ? JSON.parse(saved) : DEFAULT_SAMPLE_PINS;
+        return parsed[0]?.id || null;
       });
 
-      const [tripTitle, setTripTitle] = useState(() => localStorage.getItem("travel_planner_title_v10") || "오사카 여행 계획");
-      const [exchangeRate, setExchangeRate] = useState(() => Number(localStorage.getItem("travel_planner_rate_v10")) || 9.05);
-      const [peopleCount, setPeopleCount] = useState(() => Number(localStorage.getItem("travel_planner_people_v10")) || 2);
-      const [activeTab, setActiveTab] = useState("itinerary");
-      const [selectedDayFilter, setSelectedDayFilter] = useState("ALL");
-      const [selectedPinId, setSelectedPinId] = useState(() => pins[0]?.id || null);
-
-      const [mapTheme, setMapTheme] = useState(() => localStorage.getItem("travel_planner_map_theme") || "light");
-      const [mapClickMode, setMapClickMode] = useState(null);
-
+      // 검색 모달 상태
       const [showAddModal, setShowAddModal] = useState(false);
       const [searchKeyword, setSearchKeyword] = useState("");
       const [searchResults, setSearchResults] = useState([]);
+      const [translatedInfo, setTranslatedInfo] = useState(null);
       const [isSearching, setIsSearching] = useState(false);
-      const [searchStatusMsg, setSearchStatusMsg] = useState("");
       const [customCategory, setCustomCategory] = useState("🏨 숙소·호텔");
-      const [isCategoryLockedByUser, setIsCategoryLockedByUser] = useState(false);
-      const [customCategoryInput, setCustomCategoryInput] = useState("");
-      const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
-      const [newPinDay, setNewPinDay] = useState(1);
 
-      const [quickCatPinId, setQuickCatPinId] = useState(null);
-
-      const [showResetModal, setShowResetModal] = useState(false);
-      const [toastMsg, setToastMsg] = useState(null);
-
+      // 핀 이름/카테고리 수정 상태
       const [editingPinId, setEditingPinId] = useState(null);
       const [editNameText, setEditNameText] = useState("");
-      const [editingCoordPinId, setEditingCoordPinId] = useState(null);
-      const [editLatText, setEditLatText] = useState("");
-      const [editLngText, setEditLngText] = useState("");
-      const [editingTransitPinId, setEditingTransitPinId] = useState(null);
-      const [editTransitMinutes, setEditTransitMinutes] = useState("");
+      const [editCategoryText, setEditCategoryText] = useState("🏨 숙소·호텔");
 
+      // 지출 품목 추가 상태
       const [newItemTitle, setNewItemTitle] = useState("");
       const [newItemAmount, setNewItemAmount] = useState("");
       const [inputCurrency, setInputCurrency] = useState("JPY");
 
+      // 이동 애니메이션 & 영구 고정 요약 바
+      const [animatingInfo, setAnimatingInfo] = useState(null);
+      const [lastCompletedSegment, setLastCompletedSegment] = useState(null);
+      const [isJourneyPlaying, setIsJourneyPlaying] = useState(false);
+      const [showResetModal, setShowResetModal] = useState(false);
+      const [toastMsg, setToastMsg] = useState(null);
+
+      // 지도 & 드래그 Ref
       const mapContainerRef = useRef(null);
       const mapInstanceRef = useRef(null);
-      const markersRef = useRef({});
+      const markersRef = useRef([]);
       const polylinesRef = useRef([]);
-      const previewMarkerRef = useRef(null);
-      const mapClickModeRef = useRef(null);
-      const selectedPinIdRef = useRef(selectedPinId);
-      const customCategoryRef = useRef(customCategory);
-      const newPinDayRef = useRef(newPinDay);
+      const activeSegmentLineRef = useRef(null);
+      const travelerMarkerRef = useRef(null);
+      const animFrameRef = useRef(null);
+      const dragItemIndexRef = useRef(null);
+      const dragOverIndexRef = useRef(null);
 
-      const dragItemRef = useRef(null);
-      const dragOverItemRef = useRef(null);
-
-      useEffect(() => { mapClickModeRef.current = mapClickMode; }, [mapClickMode]);
-      useEffect(() => { selectedPinIdRef.current = selectedPinId; }, [selectedPinId]);
-      useEffect(() => { customCategoryRef.current = customCategory; }, [customCategory]);
-      useEffect(() => { newPinDayRef.current = newPinDay; }, [newPinDay]);
-
-      const showToast = useCallback((msg) => {
+      const showToast = (msg) => {
         setToastMsg(msg);
-        setTimeout(() => setToastMsg(null), 4000);
-      }, []);
-
-      useEffect(() => { localStorage.setItem("travel_planner_pins_v10", JSON.stringify(pins)); }, [pins]);
-      useEffect(() => { localStorage.setItem("travel_planner_title_v10", tripTitle); }, [tripTitle]);
-      useEffect(() => { localStorage.setItem("travel_planner_rate_v10", String(exchangeRate)); }, [exchangeRate]);
-      useEffect(() => { localStorage.setItem("travel_planner_people_v10", String(peopleCount)); }, [peopleCount]);
-      useEffect(() => { localStorage.setItem("travel_planner_map_theme", mapTheme); }, [mapTheme]);
+        setTimeout(() => setToastMsg(null), 3800);
+      };
 
       useEffect(() => {
-        if (!isCategoryLockedByUser && searchKeyword.trim()) {
-          const detected = detectCategoryFromText(searchKeyword);
-          if (detected) {
-            setCustomCategory(detected);
-          }
+        localStorage.setItem("travel_planner_pins_v11", JSON.stringify(pins));
+      }, [pins]);
+      useEffect(() => {
+        localStorage.setItem("travel_planner_title_v11", tripTitle);
+      }, [tripTitle]);
+      useEffect(() => {
+        localStorage.setItem("travel_planner_rate_v11", String(exchangeRate));
+      }, [exchangeRate]);
+
+      const selectedPinIndex = useMemo(
+        () => pins.findIndex((p) => p.id === selectedPinId),
+        [pins, selectedPinId]
+      );
+      const selectedPin = useMemo(
+        () => (selectedPinIndex !== -1 ? pins[selectedPinIndex] : pins[0] || null),
+        [pins, selectedPinIndex]
+      );
+
+      const prevTransitInfo = useMemo(() => {
+        if (selectedPinIndex > 0) {
+          return {
+            from: pins[selectedPinIndex - 1],
+            to: pins[selectedPinIndex],
+            info: estimateTransitInfo(pins[selectedPinIndex - 1], pins[selectedPinIndex])
+          };
         }
-      }, [searchKeyword, isCategoryLockedByUser]);
+        return null;
+      }, [pins, selectedPinIndex]);
 
-      const filteredPins = useMemo(() => {
-        if (selectedDayFilter === "ALL") return pins;
-        return pins.filter(p => (p.day || 1) === Number(selectedDayFilter));
-      }, [pins, selectedDayFilter]);
-
-      const selectedPinIndex = pins.findIndex((p) => p.id === selectedPinId);
-      const selectedPin = selectedPinIndex !== -1 ? pins[selectedPinIndex] : null;
+      const nextTransitInfo = useMemo(() => {
+        if (selectedPinIndex !== -1 && selectedPinIndex < pins.length - 1) {
+          return {
+            from: pins[selectedPinIndex],
+            to: pins[selectedPinIndex + 1],
+            info: estimateTransitInfo(pins[selectedPinIndex], pins[selectedPinIndex + 1])
+          };
+        }
+        return null;
+      }, [pins, selectedPinIndex]);
 
       const budgetStats = useMemo(() => {
         let totalPlannedKRW = 0;
         let totalBoughtKRW = 0;
-        const byCategory = {};
-
         pins.forEach((pin) => {
-          const cat = pin.category || "📍 기타 장소";
-          if (!byCategory[cat]) byCategory[cat] = { plannedKRW: 0, boughtKRW: 0, count: 0 };
-
-          (pin.items || []).forEach((item) => {
+          pin.items.forEach((item) => {
             const krw = Number(item.price || 0);
             totalPlannedKRW += krw;
-            byCategory[cat].plannedKRW += krw;
-            byCategory[cat].count += 1;
-            if (item.bought) {
-              totalBoughtKRW += krw;
-              byCategory[cat].boughtKRW += krw;
-            }
+            if (item.bought) totalBoughtKRW += krw;
           });
         });
 
+        let totalTransitMinutes = 0;
+        if (pins.length >= 2) {
+          for (let i = 0; i < pins.length - 1; i++) {
+            const info = estimateTransitInfo(pins[i], pins[i + 1]);
+            if (info) totalTransitMinutes += info.totalMinutes;
+          }
+        }
         const totalPlannedJPY = exchangeRate > 0 ? Math.round(totalPlannedKRW / exchangeRate) : 0;
-        const totalBoughtJPY = exchangeRate > 0 ? Math.round(totalBoughtKRW / exchangeRate) : 0;
+
         return {
           totalPlannedKRW,
           totalPlannedJPY,
           totalBoughtKRW,
-          totalBoughtJPY,
           remainingKRW: totalPlannedKRW - totalBoughtKRW,
-          remainingJPY: totalPlannedJPY - totalBoughtJPY,
           perPersonKRW: peopleCount > 0 ? Math.ceil(totalPlannedKRW / peopleCount) : totalPlannedKRW,
           perPersonJPY: peopleCount > 0 ? Math.ceil(totalPlannedJPY / peopleCount) : totalPlannedJPY,
-          byCategory
+          totalTransitFormatted: formatMinutesToKorean(totalTransitMinutes),
+          totalTransitMinutes
         };
       }, [pins, peopleCount, exchangeRate]);
 
-      const reverseGeocodeCoordinate = useCallback(async (lat, lng) => {
-        if (window.google && window.google.maps && window.google.maps.Geocoder) {
-          try {
-            const geocoder = new window.google.maps.Geocoder();
-            const res = await new Promise((resolve) => {
-              geocoder.geocode({ location: { lat, lng }, language: "ko" }, (results, status) => {
-                if (status === "OK" && results && results[0]) {
-                  resolve(results[0].formatted_address);
-                } else {
-                  resolve(null);
-                }
-              });
-            });
-            if (res) return res;
-          } catch (e) {}
-        }
-        try {
-          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=ko,ja,en`);
-          if (r.ok) {
-            const data = await r.json();
-            if (data && data.display_name) return data.display_name;
-          }
-        } catch (e) {}
-        return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      // 🌍 진짜 구글 한국어 지도 타일 초기화
+      useEffect(() => {
+        if (!mapContainerRef.current || mapInstanceRef.current) return;
+
+        const initCenter = pins.length > 0 ? [pins[0].lat, pins[0].lng] : [34.6674727, 135.5039453];
+        const map = L.map(mapContainerRef.current, {
+          zoomControl: false,
+          attributionControl: false
+        }).setView(initCenter, 15);
+
+        // 구글 지도 공식 한국어 맵 타일 (깨짐·워터마크 전혀 없음)
+        L.tileLayer("https://mt1.google.com/vt/lyrs=m&hl=ko&x={x}&y={y}&z={z}", {
+          maxZoom: 20
+        }).addTo(map);
+
+        L.control.zoom({ position: "bottomleft" }).addTo(map);
+        mapInstanceRef.current = map;
       }, []);
 
-      useEffect(() => {
-        if (!mapContainerRef.current || mapInstanceRef.current || !window.google?.maps) return;
-
-        const initCenter = pins.length > 0
-          ? { lat: Number(pins[0].lat), lng: Number(pins[0].lng) }
-          : { lat: 34.6687, lng: 135.5013 };
-
-        const map = new window.google.maps.Map(mapContainerRef.current, {
-          center: initCenter,
-          zoom: 15,
-          disableDefaultUI: false,
-          zoomControl: true,
-          mapTypeControl: false,
-          streetViewControl: true,
-          fullscreenControl: true,
-          styles: mapTheme === "dark" ? DARK_MAP_STYLE : []
-        });
-
-        map.addListener("click", async (e) => {
-          const clickedLat = e.latLng.lat();
-          const clickedLng = e.latLng.lng();
-          const mode = mapClickModeRef.current;
-
-          if (mode === "move_selected" && selectedPinIdRef.current) {
-            const targetId = selectedPinIdRef.current;
-            const addr = await reverseGeocodeCoordinate(clickedLat, clickedLng);
-            setPins(prev => prev.map(p => p.id === targetId ? { ...p, lat: clickedLat, lng: clickedLng, address: addr } : p));
-            setMapClickMode(null);
-            showToast("🎯 클릭한 지점으로 장소 위치가 정확히 이동되었습니다!");
-          } else if (mode === "add_new") {
-            const addr = await reverseGeocodeCoordinate(clickedLat, clickedLng);
-            const customName = window.prompt("이 위치에 추가할 장소 이름을 입력하세요:", "지도에서 선택한 장소");
-            if (customName && customName.trim()) {
-              const autoCat = detectCategoryFromText(customName) || customCategoryRef.current || "📸 명소·포토존";
-              const newPin = {
-                id: "pin-" + Date.now(),
-                name: customName.trim(),
-                category: autoCat,
-                day: newPinDayRef.current || 1,
-                address: addr,
-                lat: clickedLat,
-                lng: clickedLng,
-                completed: false,
-                memo: "",
-                customTransitMinutes: null,
-                items: []
-              };
-              setPins(prev => [...prev, newPin]);
-              setSelectedPinId(newPin.id);
-              showToast(`📍 '${newPin.name}' (${newPin.category}) 핀이 지도에 추가되었습니다!`);
-            }
-            setMapClickMode(null);
-          }
-        });
-
-        mapInstanceRef.current = map;
-      }, [reverseGeocodeCoordinate, showToast]);
-
-      useEffect(() => {
-        if (!mapInstanceRef.current) return;
-        mapInstanceRef.current.setOptions({
-          styles: mapTheme === "dark" ? DARK_MAP_STYLE : []
-        });
-      }, [mapTheme]);
-
-      useEffect(() => {
-        if (!mapInstanceRef.current || !window.google?.maps) return;
+      const clearActiveAnimationLayers = () => {
         const map = mapInstanceRef.current;
+        if (!map) return;
+        if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+        if (travelerMarkerRef.current) {
+          map.removeLayer(travelerMarkerRef.current);
+          travelerMarkerRef.current = null;
+        }
+        if (activeSegmentLineRef.current) {
+          map.removeLayer(activeSegmentLineRef.current);
+          activeSegmentLineRef.current = null;
+        }
+      };
 
-        Object.values(markersRef.current).forEach(m => m.setMap(null));
-        markersRef.current = {};
-        polylinesRef.current.forEach(l => l.setMap(null));
+      // 📍 지도 위 마커(드래그로 위치 이동 가능!) 및 구간별 대중교통 시간 배지 렌더링
+      useEffect(() => {
+        const map = mapInstanceRef.current;
+        if (!map) return;
+
+        markersRef.current.forEach((m) => map.removeLayer(m));
+        markersRef.current = [];
+        polylinesRef.current.forEach((l) => map.removeLayer(l));
         polylinesRef.current = [];
 
-        if (filteredPins.length === 0) return;
+        if (pins.length === 0) {
+          clearActiveAnimationLayers();
+          return;
+        }
 
-        const pathCoords = [];
+        // 1) 구간별 경로선 & 대중교통 소요시간 배지 영구 표시
+        for (let i = 0; i < pins.length - 1; i++) {
+          const pinA = pins[i];
+          const pinB = pins[i + 1];
+          const transit = estimateTransitInfo(pinA, pinB);
 
-        filteredPins.forEach((pin, idx) => {
-          const lat = Number(pin.lat);
-          const lng = Number(pin.lng);
-          if (isNaN(lat) || isNaN(lng)) return;
-
-          pathCoords.push({ lat, lng });
-
-          const isSelected = pin.id === selectedPinId;
-          const catMeta = getCategoryMeta(pin.category);
-          const pinColor = pin.completed ? "#10b981" : (isSelected ? "#ec4899" : catMeta.color);
-
-          const marker = new window.google.maps.Marker({
-            position: { lat, lng },
-            map: map,
-            title: `${idx + 1}. ${pin.name} (${pin.category})`,
-            draggable: true,
-            zIndex: isSelected ? 999 : idx + 10,
-            animation: isSelected ? window.google.maps.Animation.BOUNCE : null,
-            label: {
-              text: pin.completed ? "✓" : String(idx + 1),
-              color: "#ffffff",
-              fontWeight: "bold",
-              fontSize: isSelected ? "14px" : "12px"
-            },
-            icon: {
-              path: window.google.maps.SymbolPath.CIRCLE,
-              fillColor: pinColor,
-              fillOpacity: 1,
-              strokeWeight: isSelected ? 3 : 2,
-              strokeColor: "#ffffff",
-              scale: isSelected ? 17 : 13
+          const segmentLine = L.polyline(
+            [
+              [pinA.lat, pinA.lng],
+              [pinB.lat, pinB.lng]
+            ],
+            {
+              color: pinA.completed && pinB.completed ? "#10b981" : "#6366f1",
+              weight: 5,
+              opacity: 0.85,
+              dashArray: pinA.completed && pinB.completed ? null : "8, 8"
             }
+          ).addTo(map);
+
+          if (transit) {
+            segmentLine.bindTooltip(`🚌 ${i + 1}→${i + 2}: ${transit.formatted}`, {
+              permanent: true,
+              direction: "center",
+              className: "route-time-badge"
+            });
+          }
+          polylinesRef.current.push(segmentLine);
+        }
+
+        // 2) 드래그 가능한(draggable: true) 핀 마커 생성
+        pins.forEach((pin, idx) => {
+          const isSelected = pin.id === selectedPin?.id;
+          const bgColor = pin.completed
+            ? "linear-gradient(135deg, #10b981, #059669)"
+            : isSelected
+            ? "linear-gradient(135deg, #6366f1, #ec4899)"
+            : "linear-gradient(135deg, #2563eb, #1d4ed8)";
+
+          const iconHtml = `
+            <div class="custom-pin ${isSelected ? "pin-active" : ""}" style="background: ${bgColor}; transform: rotate(-45deg) scale(${isSelected ? 1.2 : 1});">
+              <span>${pin.completed ? "✓" : idx + 1}</span>
+            </div>
+          `;
+
+          const customIcon = L.divIcon({
+            html: iconHtml,
+            className: "",
+            iconSize: [38, 38],
+            iconAnchor: [19, 38],
+            popupAnchor: [0, -38]
           });
 
-          if (isSelected) {
-            setTimeout(() => {
-              if (marker.getAnimation() !== null) marker.setAnimation(null);
-            }, 1400);
-          }
+          const marker = L.marker([pin.lat, pin.lng], {
+            icon: customIcon,
+            draggable: true // 🖐️ 핀을 꾹 눌러서 원하는 위치로 바로 이동 가능!
+          }).addTo(map);
 
-          marker.addListener("click", () => {
+          marker.on("click", () => {
             setSelectedPinId(pin.id);
           });
 
-          marker.addListener("dragend", async (e) => {
-            const newLat = e.latLng.lat();
-            const newLng = e.latLng.lng();
-            const addr = await reverseGeocodeCoordinate(newLat, newLng);
-            setPins(prev => prev.map(p => p.id === pin.id ? { ...p, lat: newLat, lng: newLng, address: addr } : p));
-            showToast(`📍 '${pin.name}'의 위치가 드래그한 곳으로 업데이트되었습니다!`);
+          // 🖐️ 마커를 드래그해서 놓았을 때 좌표 즉시 업데이트 & 소요시간 자동 재계산
+          marker.on("dragend", (e) => {
+            const newPos = e.target.getLatLng();
+            setPins((prev) =>
+              prev.map((p) =>
+                p.id === pin.id ? { ...p, lat: newPos.lat, lng: newPos.lng } : p
+              )
+            );
+            setSelectedPinId(pin.id);
+            showToast(`📍 '${pin.name}' 위치가 이동되었습니다! (이동 시간 자동 재계산됨)`);
           });
 
-          markersRef.current[pin.id] = marker;
+          markersRef.current.push(marker);
+        });
+      }, [pins, selectedPin]);
+
+      // 🚌 A -> B 대중교통 이동 애니메이션 (완료 후에도 소요시간 영구 고정!)
+      const animateBetweenPins = (fromPin, toPin, onComplete) => {
+        const map = mapInstanceRef.current;
+        if (!map || !fromPin || !toPin) {
+          if (onComplete) onComplete();
+          return;
+        }
+
+        clearActiveAnimationLayers();
+        const transit = estimateTransitInfo(fromPin, toPin);
+
+        setAnimatingInfo({ fromPin, toPin, transit, progress: 0 });
+        setLastCompletedSegment({ fromPin, toPin, transit });
+
+        const bounds = L.latLngBounds([
+          [fromPin.lat, fromPin.lng],
+          [toPin.lat, toPin.lng]
+        ]);
+        map.flyToBounds(bounds.pad(0.45), { duration: 0.8 });
+
+        const vehicleEmoji = transit.mode.includes("도보")
+          ? "🏃"
+          : transit.mode.includes("신칸센")
+          ? "🚄"
+          : "🚇";
+
+        const travelerIcon = L.divIcon({
+          html: `<div class="traveler-avatar">${vehicleEmoji}</div>`,
+          className: "",
+          iconSize: [44, 44],
+          iconAnchor: [22, 22]
         });
 
-        if (pathCoords.length > 1) {
-          const polyline = new window.google.maps.Polyline({
-            path: pathCoords,
-            geodesic: true,
-            strokeColor: "#6366f1",
-            strokeOpacity: 0.85,
-            strokeWeight: 4,
-            icons: [{
-              icon: { path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3.5, strokeColor: "#ffffff", fillColor: "#6366f1", fillOpacity: 1 },
-              offset: "50%",
-              repeat: "120px"
-            }]
-          });
-          polyline.setMap(map);
-          polylinesRef.current.push(polyline);
-        }
-      }, [filteredPins, selectedPinId, reverseGeocodeCoordinate, showToast]);
+        const travelerMarker = L.marker([fromPin.lat, fromPin.lng], {
+          icon: travelerIcon,
+          zIndexOffset: 1000
+        }).addTo(map);
+        travelerMarkerRef.current = travelerMarker;
 
-      // ============================================================================
-      // 7. 6단계 하이브리드 초정밀 장소 검색 엔진
-      // ============================================================================
-      const performMultiEnginePlaceSearch = async (rawQuery) => {
-        const query = rawQuery.trim();
-        if (!query) return [];
+        const activeLine = L.polyline([[fromPin.lat, fromPin.lng]], {
+          color: "#ec4899",
+          weight: 6,
+          opacity: 0.95
+        }).addTo(map);
+        activeSegmentLineRef.current = activeLine;
 
-        const collected = [];
-        const addCandidate = (cand) => {
-          if (!cand || cand.lat == null || cand.lng == null) return;
-          const lat = Number(cand.lat);
-          const lng = Number(cand.lng);
-          if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+        const durationMs = 2100;
+        const startTime = performance.now();
 
-          const isDup = collected.some(existing => {
-            const dist = getDistanceKm(existing.lat, existing.lng, lat, lng);
-            return dist < 0.06;
-          });
-          if (!isDup) {
-            const detectedCat = cand.category || detectCategoryFromText(cand.name + " " + (cand.address || ""), cand.types || []);
-            collected.push({
-              name: cand.name || query,
-              address: cand.address || "",
-              lat,
-              lng,
-              category: detectedCat || null,
-              source: cand.source || "검색"
-            });
+        const step = (now) => {
+          const elapsed = now - startTime;
+          const rawT = Math.min(1, elapsed / durationMs);
+          const t = rawT < 0.5 ? 4 * rawT * rawT * rawT : 1 - Math.pow(-2 * rawT + 2, 3) / 2;
+
+          const curLat = fromPin.lat + (toPin.lat - fromPin.lat) * t;
+          const curLng = fromPin.lng + (toPin.lng - fromPin.lng) * t;
+
+          travelerMarker.setLatLng([curLat, curLng]);
+          activeLine.setLatLngs([
+            [fromPin.lat, fromPin.lng],
+            [curLat, curLng]
+          ]);
+
+          setAnimatingInfo((prev) =>
+            prev ? { ...prev, progress: Math.round(rawT * 100) } : null
+          );
+
+          if (rawT < 1) {
+            animFrameRef.current = requestAnimationFrame(step);
+          } else {
+            map.flyTo([toPin.lat, toPin.lng], 16, { duration: 0.8 });
+            setTimeout(() => {
+              clearActiveAnimationLayers();
+              setAnimatingInfo(null);
+              setSelectedPinId(toPin.id);
+              if (onComplete) onComplete();
+            }, 850);
           }
         };
 
-        const qLower = query.toLowerCase().replace(/\s+/g, "");
-
-        // [Engine 1] 내장 검증된 인기 여행지 DB 매칭
-        CURATED_PLACES_DB.forEach(item => {
-          const nameNorm = item.name.toLowerCase().replace(/\s+/g, "");
-          const hitAlias = item.aliases.some(a => {
-            const aNorm = a.toLowerCase().replace(/\s+/g, "");
-            return aNorm.includes(qLower) || qLower.includes(aNorm);
-          });
-          if (nameNorm.includes(qLower) || qLower.includes(nameNorm) || hitAlias) {
-            addCandidate({
-              name: item.name,
-              address: item.address,
-              lat: item.lat,
-              lng: item.lng,
-              category: item.category,
-              source: "⭐ 인기 여행지 DB"
-            });
-          }
-        });
-
-        // [Engine 2] 한국어 -> 일본어/영어 번역 및 로컬 변형어 생성
-        const localVariants = buildLocalQueryVariants(query);
-        const translatedVariants = await translateQueryToJaAndEn(query);
-        const allSearchQueries = Array.from(new Set([query, ...translatedVariants, ...localVariants])).slice(0, 4);
-
-        // [Engine 3] Google Maps PlacesService & Geocoder
-        const googlePromises = [];
-        if (window.google?.maps?.places && mapInstanceRef.current) {
-          googlePromises.push(new Promise((resolve) => {
-            const service = new window.google.maps.places.PlacesService(mapInstanceRef.current);
-            service.textSearch({ query: query, language: "ko" }, (results, status) => {
-              if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
-                results.slice(0, 5).forEach(r => {
-                  if (r.geometry?.location) {
-                    addCandidate({
-                      name: r.name,
-                      address: r.formatted_address || "",
-                      lat: r.geometry.location.lat(),
-                      lng: r.geometry.location.lng(),
-                      types: r.types || [],
-                      source: "Google Places"
-                    });
-                  }
-                });
-              }
-              resolve();
-            });
-          }));
-        }
-
-        if (window.google?.maps?.Geocoder) {
-          for (const qVar of allSearchQueries.slice(0, 2)) {
-            googlePromises.push(new Promise((resolve) => {
-              const geocoder = new window.google.maps.Geocoder();
-              geocoder.geocode({ address: qVar, language: "ko" }, (results, status) => {
-                if (status === "OK" && results) {
-                  results.slice(0, 3).forEach(r => {
-                    if (r.geometry?.location) {
-                      const cleanName = r.address_components?.[0]?.long_name || qVar;
-                      addCandidate({
-                        name: cleanName.length > 2 ? cleanName : query,
-                        address: r.formatted_address || "",
-                        lat: r.geometry.location.lat(),
-                        lng: r.geometry.location.lng(),
-                        types: r.types || [],
-                        source: "Google Geocoder"
-                      });
-                    }
-                  });
-                }
-                resolve();
-              });
-            }));
-          }
-        }
-
-        // [Engine 4] OpenStreetMap Nominatim 다중 언어 검색
-        const nominatimPromises = allSearchQueries.map(async (qVar) => {
-          try {
-            const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(qVar)}&addressdetails=1&limit=5&accept-language=ko,ja,en`;
-            const res = await fetch(url);
-            if (!res.ok) return;
-            const data = await res.json();
-            if (Array.isArray(data)) {
-              data.forEach(item => {
-                const displayNameParts = (item.display_name || "").split(",");
-                const primaryName = item.name || displayNameParts[0] || query;
-                addCandidate({
-                  name: primaryName,
-                  address: item.display_name || "",
-                  lat: parseFloat(item.lat),
-                  lng: parseFloat(item.lon),
-                  types: [item.category, item.type],
-                  source: "OSM 정밀지도"
-                });
-              });
-            }
-          } catch (e) {}
-        });
-
-        // [Engine 5] Komoot Photon 지오코더
-        const photonPromises = allSearchQueries.slice(0, 2).map(async (qVar) => {
-          try {
-            const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(qVar)}&limit=5`;
-            const res = await fetch(url);
-            if (!res.ok) return;
-            const data = await res.json();
-            if (data && Array.isArray(data.features)) {
-              data.features.forEach(f => {
-                const coords = f.geometry?.coordinates;
-                const props = f.properties || {};
-                if (coords && coords.length >= 2) {
-                  const addrParts = [props.country, props.state, props.city, props.district, props.street, props.housenumber].filter(Boolean);
-                  addCandidate({
-                    name: props.name || query,
-                    address: addrParts.join(" ") || props.name || "",
-                    lat: Number(coords[1]),
-                    lng: Number(coords[0]),
-                    types: [props.osm_key, props.osm_value],
-                    source: "Photon POI"
-                  });
-                }
-              });
-            }
-          } catch (e) {}
-        });
-
-        // [Engine 6] 위키피디아 위치백과 검색
-        const wikiPromise = (async () => {
-          try {
-            const wikiUrl = `https://ko.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=3&prop=coordinates|description&format=json&origin=*`;
-            const res = await fetch(wikiUrl);
-            if (!res.ok) return;
-            const data = await res.json();
-            const pages = data?.query?.pages;
-            if (pages) {
-              Object.values(pages).forEach(p => {
-                if (p.coordinates && p.coordinates[0]) {
-                  addCandidate({
-                    name: p.title,
-                    address: p.description || "위키백과 인증 위치",
-                    lat: p.coordinates[0].lat,
-                    lng: p.coordinates[0].lon,
-                    source: "Wikipedia 좌표"
-                  });
-                }
-              });
-            }
-          } catch (e) {}
-        })();
-
-        await Promise.allSettled([
-          ...googlePromises,
-          ...nominatimPromises,
-          ...photonPromises,
-          wikiPromise
-        ]);
-
-        return collected.slice(0, 10);
+        animFrameRef.current = requestAnimationFrame(step);
       };
 
-      const handleSmartSearch = async (e) => {
-        if (e) e.preventDefault();
+      const handleCompleteAndMoveNext = (pinId) => {
+        const currentIndex = pins.findIndex((p) => p.id === pinId);
+        if (currentIndex === -1) return;
+
+        const currentPin = pins[currentIndex];
+        const nextPin = pins[currentIndex + 1] || null;
+
+        setPins((prev) =>
+          prev.map((p) => (p.id === pinId ? { ...p, completed: true } : p))
+        );
+
+        if (nextPin) {
+          const tInfo = estimateTransitInfo(currentPin, nextPin);
+          showToast(
+            `✅ '${currentPin.name}' 완료! 다음 '${nextPin.name}'까지 대중교통 약 ${tInfo.formatted} 걸립니다.`
+          );
+          animateBetweenPins(currentPin, nextPin);
+        } else {
+          showToast(`🎉 모든 여행 코스를 완료했습니다!`);
+        }
+      };
+
+      // =========================================================================
+      // 🔍 핵심: api/resolve.js 백엔드 연동 + 다국어(한/일/영) 실시간 검색 목록 엔진
+      // =========================================================================
+      const handleSearchPlacesAndLinks = async (e) => {
+        e.preventDefault();
         const query = searchKeyword.trim();
         if (!query) return;
 
         setIsSearching(true);
         setSearchResults([]);
-        setSearchStatusMsg("🔍 구글 링크 해독 및 다중 위치 검색 엔진 가동 중...");
+        setTranslatedInfo(null);
 
         try {
-          const urlInfo = await resolveGoogleMapsInput(query);
+          const isUrl =
+            query.startsWith("http://") ||
+            query.startsWith("https://") ||
+            query.includes("google.") ||
+            query.includes("goo.gl") ||
+            query.includes("/maps/");
 
-          if (urlInfo.isUrl) {
-            if (urlInfo.lat !== null && urlInfo.lng !== null) {
-              let finalName = urlInfo.name;
-              let finalAddress = "구글 지도 링크에서 추출한 정확한 위치";
-
-              const revAddr = await reverseGeocodeCoordinate(urlInfo.lat, urlInfo.lng);
-              if (revAddr) finalAddress = revAddr;
-              if (!finalName || finalName === "구글 지도 공유 장소") {
-                finalName = revAddr ? revAddr.split(",")[0] : "구글 지도 핀 장소";
-              }
-
-              const autoCat = !isCategoryLockedByUser
-                ? (detectCategoryFromText(finalName + " " + finalAddress) || customCategory)
-                : customCategory;
-
-              addPinToMap({
-                name: finalName,
-                category: autoCat,
-                address: finalAddress,
-                lat: urlInfo.lat,
-                lng: urlInfo.lng,
-                day: newPinDay
-              });
-              showToast(`✅ 구글 링크에서 '${finalName}' (${autoCat}) 위치를 정확히 꽂았습니다!`);
+          // 1단계: 긴 구글 지도 URL이면 클라이언트에서 먼저 즉시 해독
+          if (isUrl) {
+            const clientParsed = parseGoogleMapsUrlClient(query);
+            if (clientParsed) {
+              setSearchResults([clientParsed]);
               setIsSearching(false);
-              setSearchStatusMsg("");
               return;
             }
+          }
 
-            if (urlInfo.name) {
-              setSearchStatusMsg(`🔗 링크에서 '${urlInfo.name}' 이름을 확인하여 좌표를 찾는 중...`);
-              const resultsFromLinkName = await performMultiEnginePlaceSearch(urlInfo.name);
-              if (resultsFromLinkName.length > 0) {
-                setSearchResults(resultsFromLinkName);
-                setSearchStatusMsg(`✅ 링크 장소 '${urlInfo.name}'의 검색 결과입니다. 원하는 위치를 클릭해 추가하세요!`);
+          // 2단계: Vercel 서버의 /api/resolve 호출 (단축 URL 리다이렉트 해독 및 다국어 통합 검색)
+          try {
+            const apiParam = isUrl
+              ? `url=${encodeURIComponent(query)}`
+              : `q=${encodeURIComponent(query)}`;
+            const apiRes = await fetch(`/api/resolve?${apiParam}`);
+            if (apiRes.ok) {
+              const apiData = await apiRes.json();
+              if (apiData.translated) setTranslatedInfo(apiData.translated);
+              if (apiData.results && apiData.results.length > 0) {
+                setSearchResults(apiData.results);
                 setIsSearching(false);
                 return;
               }
             }
-
-            setSearchStatusMsg("⚠️ 단축 링크(maps.app.goo.gl)는 구글 보안 정책상 장소 이름이나 긴 주소창 링크로 넣으면 100% 정확히 검색됩니다. 아래 '새 탭에서 링크 열기' 후 열린 페이지의 주소창이나 장소명을 복사해 보세요!");
-            setIsSearching(false);
-            return;
+          } catch (serverErr) {
+            // 로컬 파일 실행 등 서버 API가 없을 때는 아래 브라우저 직접 다국어 검색으로 자동 이어짐
           }
 
-          const results = await performMultiEnginePlaceSearch(query);
-          if (results.length > 0) {
-            setSearchResults(results);
-            if (!isCategoryLockedByUser && results[0].category) {
-              setCustomCategory(results[0].category);
+          // 3단계: 브라우저 직접 다국어(한->일/영) 자동 번역 + ArcGIS & OSM 병렬 검색
+          const translateDirect = async (text, tl) => {
+            try {
+              const r = await fetch(
+                `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(
+                  text
+                )}`
+              );
+              const d = await r.json();
+              return d?.[0]?.map((x) => x[0]).join("") || text;
+            } catch {
+              return text;
             }
-            setSearchStatusMsg(`✅ 총 ${results.length}개의 정확한 위치를 찾았습니다. 클릭하면 즉시 지도에 추가됩니다!`);
-          } else {
-            setSearchStatusMsg("❗ 일치하는 검색 결과를 찾지 못했습니다. 오타를 확인하시거나 아래 '현재 지도 중앙에 수동으로 핀 만들기'를 이용해 주세요.");
+          };
+
+          const [jaKw, enKw] = await Promise.all([
+            translateDirect(query, "ja"),
+            translateDirect(query, "en")
+          ]);
+          setTranslatedInfo({ original: query, ja: jaKw, en: enKw });
+
+          const keywords = Array.from(new Set([query, jaKw, enKw].filter(Boolean)));
+          const directList = [];
+
+          await Promise.all(
+            keywords.map(async (kw) => {
+              // ArcGIS 글로벌 장소 검색
+              try {
+                const arcRes = await fetch(
+                  `https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(
+                    kw
+                  )}&f=json&outFields=PlaceName,Place_addr,Match_addr&maxLocations=5`
+                );
+                const arcData = await arcRes.json();
+                if (arcData?.candidates) {
+                  arcData.candidates.forEach((c) => {
+                    if (c.location) {
+                      directList.push({
+                        name: c.attributes?.PlaceName || c.address.split(",")[0] || kw,
+                        address: c.attributes?.Place_addr || c.attributes?.Match_addr || c.address,
+                        lat: c.location.y,
+                        lng: c.location.x
+                      });
+                    }
+                  });
+                }
+              } catch (e) {}
+
+              // Nominatim 오픈스트리트맵 검색
+              try {
+                const nomRes = await fetch(
+                  `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+                    kw
+                  )}&limit=5&accept-language=ko,ja,en`
+                );
+                const nomData = await nomRes.json();
+                if (Array.isArray(nomData)) {
+                  nomData.forEach((item) => {
+                    directList.push({
+                      name: item.name || item.display_name.split(",")[0],
+                      address: item.display_name,
+                      lat: parseFloat(item.lat),
+                      lng: parseFloat(item.lon)
+                    });
+                  });
+                }
+              } catch (e) {}
+            })
+          );
+
+          const unique = [];
+          for (const item of directList) {
+            if (
+              !unique.some(
+                (u) => Math.abs(u.lat - item.lat) < 0.0008 && Math.abs(u.lng - item.lng) < 0.0008
+              )
+            ) {
+              unique.push(item);
+            }
           }
-        } catch (err) {
-          setSearchStatusMsg("⚠️ 검색 중 일시적인 오류가 발생했습니다. 다시 시도해 주세요.");
+
+          setSearchResults(unique.slice(0, 8));
+          if (unique.length === 0) {
+            showToast("⚠️ 검색 결과가 없습니다. 아래 버튼으로 지도에 직접 핀을 꽂을 수 있습니다.");
+          }
         } finally {
           setIsSearching(false);
         }
       };
 
-      const handlePreviewSearchResult = (res) => {
-        if (!mapInstanceRef.current || !window.google?.maps) return;
-        const map = mapInstanceRef.current;
-        const pos = { lat: Number(res.lat), lng: Number(res.lng) };
-        map.panTo(pos);
-        map.setZoom(17);
-
-        if (previewMarkerRef.current) {
-          previewMarkerRef.current.setMap(null);
-        }
-        previewMarkerRef.current = new window.google.maps.Marker({
-          position: pos,
-          map: map,
-          title: `[미리보기] ${res.name}`,
-          animation: window.google.maps.Animation.DROP,
-          icon: {
-            path: window.google.maps.SymbolPath.CIRCLE,
-            fillColor: "#f59e0b",
-            fillOpacity: 0.9,
-            strokeWeight: 3,
-            strokeColor: "#ffffff",
-            scale: 15
-          }
-        });
-      };
-
-      const addPinToMap = ({ name, category, address, lat, lng, day }) => {
-        if (previewMarkerRef.current) {
-          previewMarkerRef.current.setMap(null);
-          previewMarkerRef.current = null;
-        }
-
-        const resolvedCategory = category || customCategory || "📸 명소·포토존";
+      const addPinToMap = ({ name, category, address, lat, lng }) => {
         const newPin = {
-          id: "pin-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
-          name: name || "새 장소",
-          category: resolvedCategory,
-          day: Number(day || newPinDay || 1),
+          id: "pin-" + Date.now(),
+          name,
+          category: category || customCategory,
           address: address || "",
           lat: Number(lat),
           lng: Number(lng),
@@ -1280,105 +777,57 @@
         setShowAddModal(false);
         setSearchKeyword("");
         setSearchResults([]);
-        setSearchStatusMsg("");
-        setIsCategoryLockedByUser(false);
 
         if (mapInstanceRef.current) {
-          mapInstanceRef.current.panTo({ lat: newPin.lat, lng: newPin.lng });
-          mapInstanceRef.current.setZoom(16);
+          mapInstanceRef.current.flyTo([newPin.lat, newPin.lng], 16, { duration: 0.9 });
         }
+        showToast(`📍 '${newPin.name}' 핀이 추가되었습니다! (지도 위 핀을 드래그해 위치 조정 가능)`);
       };
 
-      const handleManualCenterPinAdd = () => {
-        const query = searchKeyword.trim() || "직접 지정한 장소";
-        const centerObj = mapInstanceRef.current ? mapInstanceRef.current.getCenter() : null;
-        const lat = centerObj && typeof centerObj.lat === "function" ? centerObj.lat() : 34.6687;
-        const lng = centerObj && typeof centerObj.lng === "function" ? centerObj.lng() : 135.5013;
-
-        addPinToMap({
-          name: query,
-          category: customCategory,
-          address: "지도 위 핀을 드래그해서 정확한 위치로 옮겨주세요",
-          lat,
-          lng,
-          day: newPinDay
-        });
-        showToast(`📍 현재 지도 중앙에 '${query}' 핀을 생성했습니다. 핀을 드래그해 위치를 조절하세요!`);
+      // 🖐️ 리스트 드래그 앤 드롭 순서 변경
+      const handleDragStart = (index) => {
+        dragItemIndexRef.current = index;
       };
-
-      const handleDragStart = (e, index) => { dragItemRef.current = index; };
-      const handleDragEnter = (e, index) => { dragOverItemRef.current = index; };
+      const handleDragEnter = (index) => {
+        dragOverIndexRef.current = index;
+      };
       const handleDragEnd = () => {
-        if (
-          dragItemRef.current !== null &&
-          dragOverItemRef.current !== null &&
-          dragItemRef.current !== dragOverItemRef.current
-        ) {
-          const sourcePin = filteredPins[dragItemRef.current];
-          const targetPin = filteredPins[dragOverItemRef.current];
-          if (sourcePin && targetPin) {
-            const fullCopy = [...pins];
-            const fromIdx = fullCopy.findIndex(p => p.id === sourcePin.id);
-            const toIdx = fullCopy.findIndex(p => p.id === targetPin.id);
-            if (fromIdx !== -1 && toIdx !== -1) {
-              const [moved] = fullCopy.splice(fromIdx, 1);
-              fullCopy.splice(toIdx, 0, moved);
-              setPins(fullCopy);
-              showToast("🔄 여정 순서가 변경되었습니다.");
-            }
-          }
+        const from = dragItemIndexRef.current;
+        const to = dragOverIndexRef.current;
+        if (from !== null && to !== null && from !== to) {
+          const updated = [...pins];
+          const [moved] = updated.splice(from, 1);
+          updated.splice(to, 0, moved);
+          setPins(updated);
+          showToast("🔄 코스 순서가 변경되었습니다! (이동 시간 자동 재계산됨)");
         }
-        dragItemRef.current = null;
-        dragOverItemRef.current = null;
+        dragItemIndexRef.current = null;
+        dragOverIndexRef.current = null;
       };
 
-      const movePinOrder = (pinId, direction) => {
-        const idx = pins.findIndex(p => p.id === pinId);
-        if (idx === -1) return;
-        const targetIdx = idx + direction;
-        if (targetIdx < 0 || targetIdx >= pins.length) return;
-        const copy = [...pins];
-        const temp = copy[idx];
-        copy[idx] = copy[targetIdx];
-        copy[targetIdx] = temp;
-        setPins(copy);
-      };
-
-      const savePinName = (id) => {
+      const handleSavePinEdit = (pinId) => {
         if (!editNameText.trim()) return;
-        setPins(prev => prev.map(p => p.id === id ? { ...p, name: editNameText.trim() } : p));
+        setPins((prev) =>
+          prev.map((p) =>
+            p.id === pinId
+              ? { ...p, name: editNameText.trim(), category: editCategoryText }
+              : p
+          )
+        );
         setEditingPinId(null);
-        showToast("✏️ 장소 이름이 변경되었습니다.");
-      };
-
-      const savePinCoords = (id) => {
-        const lat = parseFloat(editLatText);
-        const lng = parseFloat(editLngText);
-        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-          showToast("⚠️ 올바른 위도(-90~90)와 경도(-180~180) 숫자를 입력해 주세요.");
-          return;
-        }
-        setPins(prev => prev.map(p => p.id === id ? { ...p, lat, lng } : p));
-        setEditingCoordPinId(null);
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.panTo({ lat, lng });
-          mapInstanceRef.current.setZoom(17);
-        }
-        showToast("📍 좌표가 정확히 수정되었습니다.");
-      };
-
-      const updatePinCategory = (pinId, newCat) => {
-        setPins(prev => prev.map(p => p.id === pinId ? { ...p, category: newCat } : p));
-        setQuickCatPinId(null);
-        showToast(`🏷️ 카테고리가 '${newCat}'(으)로 변경되었습니다.`);
+        showToast("✏️ 장소 정보가 수정되었습니다.");
       };
 
       const handleAddItem = (e) => {
         e.preventDefault();
         if (!selectedPin || !newItemTitle.trim()) return;
         const rawAmount = parseFloat(String(newItemAmount).replace(/[^0-9.]/g, "")) || 0;
-        const priceKRW = inputCurrency === "JPY" ? Math.round(rawAmount * exchangeRate) : Math.round(rawAmount);
-        const priceJPY = inputCurrency === "JPY" ? Math.round(rawAmount) : Math.round(rawAmount / (exchangeRate || 9.05));
+        const priceKRW =
+          inputCurrency === "JPY" ? Math.round(rawAmount * exchangeRate) : Math.round(rawAmount);
+        const priceJPY =
+          inputCurrency === "JPY"
+            ? Math.round(rawAmount)
+            : Math.round(rawAmount / (exchangeRate || 9.05));
 
         const newItem = {
           id: "item-" + Date.now(),
@@ -1387,63 +836,27 @@
           yen: priceJPY,
           bought: false
         };
-        setPins((prev) => prev.map((p) => p.id === selectedPin.id ? { ...p, items: [...(p.items || []), newItem] } : p));
+
+        setPins((prev) =>
+          prev.map((p) =>
+            p.id === selectedPin.id ? { ...p, items: [...p.items, newItem] } : p
+          )
+        );
         setNewItemTitle("");
         setNewItemAmount("");
-      };
-
-      const handleCompleteAndMoveNext = (pinId) => {
-        const currentIndex = filteredPins.findIndex((p) => p.id === pinId);
-        if (currentIndex === -1) return;
-        setPins((prev) => prev.map((p) => (p.id === pinId ? { ...p, completed: true } : p)));
-        const nextPin = filteredPins[currentIndex + 1] || null;
-        if (nextPin) {
-          setSelectedPinId(nextPin.id);
-          if (mapInstanceRef.current) {
-            mapInstanceRef.current.panTo({ lat: nextPin.lat, lng: nextPin.lng });
-          }
-          showToast(`✅ 완료! 다음 코스 '${nextPin.name}'(으)로 이동합니다.`);
-        } else {
-          showToast("🎉 모든 여정 코스를 완료했습니다!");
-        }
-      };
-
-      const handleCopySummaryToClipboard = () => {
-        const lines = [`✈️ [${tripTitle}] 여행 일정 & 예산 요약\n`];
-        pins.forEach((p, i) => {
-          const pinSum = (p.items || []).reduce((s, it) => s + Number(it.price || 0), 0);
-          lines.push(`${i + 1}. [${p.day || 1}일차 | ${p.category}] ${p.name}${pinSum > 0 ? ` (${formatKRW(pinSum)})` : ""}`);
-          if (p.memo) lines.push(`   📝 메모: ${p.memo}`);
-        });
-        lines.push(`\n💰 총 예산: ${formatKRW(budgetStats.totalPlannedKRW)} (${formatJPY(budgetStats.totalPlannedJPY)})`);
-        lines.push(`👥 1인당(${peopleCount}명): ${formatKRW(budgetStats.perPersonKRW)} (${formatJPY(budgetStats.perPersonJPY)})`);
-
-        navigator.clipboard?.writeText(lines.join("\n"));
-        showToast("📋 카카오톡 공유용 여행 요약이 클립보드에 복사되었습니다!");
-      };
-
-      const handleFitAllPinsOnMap = () => {
-        if (!mapInstanceRef.current || !window.google?.maps || filteredPins.length === 0) return;
-        if (filteredPins.length === 1) {
-          mapInstanceRef.current.panTo({ lat: filteredPins[0].lat, lng: filteredPins[0].lng });
-          mapInstanceRef.current.setZoom(16);
-          return;
-        }
-        const bounds = new window.google.maps.LatLngBounds();
-        filteredPins.forEach(p => bounds.extend({ lat: Number(p.lat), lng: Number(p.lng) }));
-        mapInstanceRef.current.fitBounds(bounds, 60);
       };
 
       return (
         <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
           {toastMsg && (
-            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-indigo-600 text-white px-5 py-3 rounded-2xl shadow-2xl border border-indigo-400/60 font-bold text-xs sm:text-sm flex items-center gap-2 max-w-[92vw]">
-              <span>{toastMsg}</span>
+            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-indigo-600 text-white px-5 py-3 rounded-2xl shadow-2xl border border-indigo-400/50 font-bold text-xs sm:text-sm">
+              {toastMsg}
             </div>
           )}
 
-          <header className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 px-4 lg:px-8 py-3">
-            <div className="max-w-[1650px] mx-auto flex flex-wrap items-center justify-between gap-3">
+          {/* 상단 헤더 */}
+          <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-xl sticky top-0 z-40 px-4 lg:px-8 py-3">
+            <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg font-black text-lg">
                   ✈️
@@ -1453,11 +866,34 @@
                     type="text"
                     value={tripTitle}
                     onChange={(e) => setTripTitle(e.target.value)}
-                    className="bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 font-extrabold text-base sm:text-lg text-white focus:outline-none focus:border-indigo-500 rounded-xl px-3 py-1"
+                    className="bg-slate-800/60 hover:bg-slate-800 border border-slate-700/80 font-extrabold text-base sm:text-lg text-white focus:outline-none focus:border-indigo-500 rounded-xl px-3 py-1"
                   />
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    6중 정밀 검색 엔진 · 구글 단축링크 해독 · 카테고리 자유 설정 · 예산 정산
+                    구글 링크 해독 · 한/일/영 통합 검색 목록 · 핀 드래그 이동 · 대중교통 시간 고정
                   </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 sm:gap-6 bg-slate-800/80 border border-slate-700 px-4 py-2 rounded-2xl text-xs">
+                <div>
+                  <span className="text-[10px] text-slate-400 block">총 핀포인트</span>
+                  <span className="font-extrabold text-white">
+                    {pins.filter((p) => p.completed).length} / {pins.length} 완료
+                  </span>
+                </div>
+                <div className="h-6 w-[1px] bg-slate-700" />
+                <div>
+                  <span className="text-[10px] text-slate-400 block">총 대중교통 이동</span>
+                  <span className="font-extrabold text-amber-300">
+                    🚌 {budgetStats.totalTransitMinutes > 0 ? `약 ${budgetStats.totalTransitFormatted}` : "0분"}
+                  </span>
+                </div>
+                <div className="h-6 w-[1px] bg-slate-700" />
+                <div>
+                  <span className="text-[10px] text-slate-400 block">총 예상 금액</span>
+                  <span className="font-extrabold text-emerald-400">
+                    {formatKRW(budgetStats.totalPlannedKRW)} ({formatJPY(budgetStats.totalPlannedJPY)})
+                  </span>
                 </div>
               </div>
 
@@ -1465,32 +901,22 @@
                 <div className="bg-slate-800 p-1 rounded-xl flex items-center border border-slate-700">
                   <button
                     onClick={() => setActiveTab("itinerary")}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition ${
-                      activeTab === "itinerary"
-                        ? "bg-indigo-600 text-white shadow"
-                        : "text-slate-400 hover:text-white"
+                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition ${
+                      activeTab === "itinerary" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"
                     }`}
                   >
-                    🗺️ 지도 & 코스 ({pins.length})
+                    🗺️ 지도 & 코스
                   </button>
                   <button
                     onClick={() => setActiveTab("budget")}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition ${
-                      activeTab === "budget"
-                        ? "bg-emerald-600 text-white shadow"
-                        : "text-slate-400 hover:text-white"
+                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition ${
+                      activeTab === "budget" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-white"
                     }`}
                   >
-                    💰 예산 · 정산 ({formatKRW(budgetStats.totalPlannedKRW)})
+                    💰 총 금액 · 정산 탭
                   </button>
                 </div>
 
-                <button
-                  onClick={handleCopySummaryToClipboard}
-                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-extrabold"
-                >
-                  📋 일정 복사
-                </button>
                 <button
                   onClick={() => setShowResetModal(true)}
                   className="px-3 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/40 text-rose-300 text-xs font-extrabold"
@@ -1501,519 +927,329 @@
             </div>
           </header>
 
-          {/* 탭 1: 지도 & 코스 관리 */}
+          {/* 메인 탭 1: 지도 & 코스 */}
           <main
-            className={`flex-1 max-w-[1650px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 sm:p-5 ${
-              activeTab === "itinerary" ? "grid" : "hidden"
+            className={`flex-1 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 sm:p-5 ${
+              activeTab === "itinerary" ? "block" : "hidden"
             }`}
           >
-            {/* 좌측 패널: 여정 리스트 */}
-            <section className="lg:col-span-4 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[85vh]">
-              <div className="p-4 border-b border-slate-800 space-y-3 bg-slate-900/90">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-extrabold text-sm sm:text-base text-white">
-                      📍 나의 여정 <span className="text-xs text-indigo-400">({filteredPins.length}곳)</span>
-                    </h2>
-                    <p className="text-[11px] text-emerald-400 mt-0.5">
-                      카테고리 배지를 누르면 즉시 카테고리를 바꿀 수 있어요!
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setIsCategoryLockedByUser(false);
-                      setShowAddModal(true);
-                    }}
-                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-lg pulse-badge"
-                  >
-                    ＋ 장소 추가
-                  </button>
+            {/* 좌측: 코스 리스트 (드래그 순서 변경 + 구간별 이동시간 영구 표시) */}
+            <section className="lg:col-span-4 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[82vh]">
+              <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+                <div>
+                  <h2 className="font-extrabold text-sm sm:text-base text-white">
+                    📍 나의 여행 코스 <span className="text-indigo-400">({pins.length}곳)</span>
+                  </h2>
+                  <p className="text-[11px] text-emerald-400 mt-0.5">
+                    카드를 끌어서(Drag) 순서를 바꾸거나 지도 핀을 드래그하세요!
+                  </p>
                 </div>
-
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                  {[
-                    { id: "ALL", label: "전체 일정" },
-                    { id: 1, label: "Day 1" },
-                    { id: 2, label: "Day 2" },
-                    { id: 3, label: "Day 3" },
-                    { id: 4, label: "Day 4" },
-                    { id: 5, label: "Day 5" }
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      onClick={() => {
-                        setSelectedDayFilter(tab.id);
-                        if (tab.id !== "ALL") setNewPinDay(Number(tab.id));
-                      }}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold shrink-0 transition ${
-                        selectedDayFilter === tab.id
-                          ? "bg-indigo-600 text-white"
-                          : "bg-slate-800 text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-lg"
+                >
+                  ＋ 숙소/장소 검색
+                </button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-3.5 space-y-2">
-                {filteredPins.length === 0 ? (
-                  <div className="text-center py-12 px-4 space-y-3">
-                    <div className="text-3xl">🗺️</div>
-                    <p className="text-xs text-slate-400">아직 등록된 장소가 없습니다.</p>
-                    <button
-                      onClick={() => setShowAddModal(true)}
-                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold"
-                    >
-                      ＋ 첫 장소 추가하기
-                    </button>
-                  </div>
-                ) : (
-                  filteredPins.map((pin, index) => {
-                    const isSelected = pin.id === selectedPinId;
-                    const pinTotalKRW = (pin.items || []).reduce((s, i) => s + Number(i.price || 0), 0);
-                    const catMeta = getCategoryMeta(pin.category);
-                    const prevPin = index > 0 ? filteredPins[index - 1] : null;
-                    const transit = prevPin ? estimateTransitInfo(prevPin, pin) : null;
+                {pins.map((pin, index) => {
+                  const isSelected = pin.id === selectedPin?.id;
+                  const pinTotalKRW = pin.items.reduce((s, i) => s + Number(i.price || 0), 0);
+                  const nextPin = pins[index + 1] || null;
+                  const transitToNext = nextPin ? estimateTransitInfo(pin, nextPin) : null;
 
-                    return (
-                      <React.Fragment key={pin.id}>
-                        {transit && (
-                          <div className="flex items-center justify-between px-3 py-1.5 mx-2 rounded-xl bg-slate-950/80 border border-slate-800/80 text-[11px] text-slate-300">
-                            <div className="flex items-center gap-2">
-                              <span className="text-indigo-400 font-bold">↓ {transit.mode}</span>
-                              <span className="font-extrabold text-white">{transit.formatted}</span>
-                              <span className="text-slate-500">({transit.distanceKm}km)</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => {
-                                  setEditingTransitPinId(editingTransitPinId === pin.id ? null : pin.id);
-                                  setEditTransitMinutes(pin.customTransitMinutes || String(transit.totalMinutes));
-                                }}
-                                className="text-[10px] text-slate-400 hover:text-indigo-300 underline"
-                              >
-                                시간수정
-                              </button>
-                              <a
-                                href={`https://www.google.com/maps/dir/?api=1&origin=${prevPin.lat},${prevPin.lng}&destination=${pin.lat},${pin.lng}&travelmode=transit`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-[10px] font-bold text-emerald-400 hover:underline"
-                              >
-                                길찾기 ↗
-                              </a>
+                  return (
+                    <React.Fragment key={pin.id}>
+                      <div
+                        draggable
+                        onDragStart={() => handleDragStart(index)}
+                        onDragEnter={() => handleDragEnter(index)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setSelectedPinId(pin.id);
+                          if (mapInstanceRef.current) {
+                            mapInstanceRef.current.flyTo([pin.lat, pin.lng], 16, { duration: 0.7 });
+                          }
+                        }}
+                        className={`p-3.5 rounded-2xl border transition cursor-grab active:cursor-grabbing ${
+                          isSelected
+                            ? "bg-indigo-950/60 border-indigo-500 shadow-lg"
+                            : pin.completed
+                            ? "bg-slate-900/70 border-emerald-500/40"
+                            : "bg-slate-800/50 border-slate-700/70 hover:border-slate-600"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span
+                              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black ${
+                                pin.completed
+                                  ? "bg-emerald-500 text-slate-950"
+                                  : isSelected
+                                  ? "bg-pink-500 text-white"
+                                  : "bg-slate-700 text-slate-200"
+                              }`}
+                            >
+                              {pin.completed ? "✓" : index + 1}
+                            </span>
+                            <div>
+                              <span className="text-[10px] font-bold text-indigo-400">
+                                {pin.category}
+                              </span>
+                              <h3 className="font-extrabold text-sm text-white">{pin.name}</h3>
                             </div>
                           </div>
-                        )}
 
-                        {editingTransitPinId === pin.id && (
-                          <div className="flex items-center gap-2 px-3 py-2 mx-2 rounded-xl bg-indigo-950/50 border border-indigo-500/40 text-xs">
-                            <span className="text-slate-300 text-[11px]">소요시간(분):</span>
-                            <input
-                              type="number"
-                              value={editTransitMinutes}
-                              onChange={(e) => setEditTransitMinutes(e.target.value)}
-                              className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white text-xs"
-                            />
-                            <button
-                              onClick={() => {
-                                setPins(prev => prev.map(p => p.id === pin.id ? { ...p, customTransitMinutes: Number(editTransitMinutes) || null } : p));
-                                setEditingTransitPinId(null);
-                              }}
-                              className="px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-[11px] font-bold"
-                            >
-                              저장
-                            </button>
-                            <button
-                              onClick={() => {
-                                setPins(prev => prev.map(p => p.id === pin.id ? { ...p, customTransitMinutes: null } : p));
-                                setEditingTransitPinId(null);
-                              }}
-                              className="px-2 py-1 bg-slate-800 text-slate-300 rounded-lg text-[11px]"
-                            >
-                              자동계산 복구
-                            </button>
-                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPins((prev) => prev.filter((p) => p.id !== pin.id));
+                            }}
+                            className="p-1 text-slate-500 hover:text-rose-400 text-xs"
+                          >
+                            ✕ 삭제
+                          </button>
+                        </div>
+
+                        {pin.memo && (
+                          <p className="mt-2 text-xs text-slate-300 bg-slate-950/60 p-2 rounded-xl border border-slate-800">
+                            📝 {pin.memo}
+                          </p>
                         )}
 
                         <div
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, index)}
-                          onDragEnter={(e) => handleDragEnter(e, index)}
-                          onDragEnd={handleDragEnd}
-                          onDragOver={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setSelectedPinId(pin.id);
-                            if (mapInstanceRef.current) {
-                              mapInstanceRef.current.panTo({ lat: Number(pin.lat), lng: Number(pin.lng) });
-                              mapInstanceRef.current.setZoom(16);
-                            }
-                          }}
-                          className={`p-3.5 rounded-2xl border transition cursor-grab active:cursor-grabbing relative ${
-                            isSelected
-                              ? "bg-indigo-950/60 border-indigo-500 shadow-lg"
-                              : "bg-slate-800/50 border-slate-700/70 hover:border-slate-600"
-                          }`}
+                          className="mt-3 pt-2.5 border-t border-slate-800 flex items-center justify-between"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                              <span
-                                style={{ backgroundColor: pin.completed ? "#10b981" : (isSelected ? "#ec4899" : catMeta.color) }}
-                                className="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-black text-white shadow mt-0.5"
-                              >
-                                {pin.completed ? "✓" : index + 1}
-                              </span>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setQuickCatPinId(quickCatPinId === pin.id ? null : pin.id);
-                                    }}
-                                    className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${catMeta.bgClass} hover:opacity-80 transition flex items-center gap-1`}
-                                    title="클릭하여 카테고리 변경"
-                                  >
-                                    <span>{pin.category}</span>
-                                    <span className="opacity-70">▾</span>
-                                  </button>
-                                  <span className="text-[10px] font-bold text-slate-400 bg-slate-900/90 px-1.5 py-0.5 rounded-md border border-slate-800">
-                                    Day {pin.day || 1}
-                                  </span>
-                                </div>
+                          <span className="text-xs font-extrabold text-emerald-400">
+                            예산: {formatKRW(pinTotalKRW)}
+                          </span>
 
-                                <h3 className="font-extrabold text-sm text-white pr-1 mt-1 truncate">
-                                  {pin.name}
-                                </h3>
-                                {pin.address && (
-                                  <p className="text-[11px] text-slate-400 truncate mt-0.5">{pin.address}</p>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); movePinOrder(pin.id, -1); }}
-                                className="p-1 text-slate-400 hover:text-white text-xs"
-                                title="위로 이동"
-                              >
-                                ▲
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); movePinOrder(pin.id, 1); }}
-                                className="p-1 text-slate-400 hover:text-white text-xs"
-                                title="아래로 이동"
-                              >
-                                ▼
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPins(prev => prev.filter(p => p.id !== pin.id));
-                                }}
-                                className="p-1 text-slate-500 hover:text-rose-400 text-xs"
-                                title="장소 삭제"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          </div>
-
-                          {quickCatPinId === pin.id && (
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              className="mt-2.5 p-2.5 rounded-xl bg-slate-950 border border-indigo-500/50 space-y-1.5"
+                          {!pin.completed ? (
+                            <button
+                              onClick={() => handleCompleteAndMoveNext(pin.id)}
+                              className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs"
                             >
-                              <div className="flex items-center justify-between text-[11px] font-bold text-indigo-300">
-                                <span>🏷️ 카테고리 즉시 변경</span>
-                                <button onClick={() => setQuickCatPinId(null)} className="text-slate-400 hover:text-white">✕</button>
-                              </div>
-                              <div className="grid grid-cols-2 gap-1">
-                                {CATEGORY_LIST.map(c => (
-                                  <button
-                                    key={c.id}
-                                    type="button"
-                                    onClick={() => updatePinCategory(pin.id, c.label)}
-                                    className={`px-2 py-1.5 rounded-lg text-[11px] font-bold text-left truncate border transition ${
-                                      pin.category === c.label
-                                        ? "bg-indigo-600 text-white border-indigo-400"
-                                        : "bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-600"
-                                    }`}
-                                  >
-                                    {c.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
+                              ✅ OK (다음 핀 이동)
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                setPins((prev) =>
+                                  prev.map((p) =>
+                                    p.id === pin.id ? { ...p, completed: false } : p
+                                  )
+                                )
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold"
+                            >
+                              ↩ 완료 취소
+                            </button>
                           )}
-
-                          <div className="mt-3 pt-2.5 border-t border-slate-800/90 flex items-center justify-between gap-2">
-                            <span className="text-xs text-emerald-400 font-extrabold">
-                              예산: {formatKRW(pinTotalKRW)}
-                            </span>
-                            {!pin.completed ? (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCompleteAndMoveNext(pin.id);
-                                }}
-                                className="px-3 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs"
-                              >
-                                ✅ 방문 완료
-                              </button>
-                            ) : (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPins(prev => prev.map(p => p.id === pin.id ? { ...p, completed: false } : p));
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold"
-                              >
-                                ↩ 완료 취소
-                              </button>
-                            )}
-                          </div>
                         </div>
-                      </React.Fragment>
-                    );
-                  })
-                )}
+                      </div>
+
+                      {/* A -> B 대중교통 소요 시간 고정 표시 */}
+                      {transitToNext && (
+                        <div className="my-1.5 pl-4 flex items-center justify-between bg-indigo-950/30 border border-indigo-500/40 rounded-2xl px-3.5 py-2.5">
+                          <div>
+                            <div className="text-[11px] text-slate-300 font-semibold">
+                              #{index + 1} {pin.name} → #{index + 2} {nextPin.name}
+                            </div>
+                            <div className="text-xs font-extrabold text-amber-300 mt-0.5">
+                              {transitToNext.mode} · ⏱️ 예상 {transitToNext.formatted} ({transitToNext.distanceKm}km)
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => animateBetweenPins(pin, nextPin)}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-extrabold"
+                          >
+                            ▶ 이동보기
+                          </button>
+                        </div>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </div>
             </section>
 
-            {/* 중앙 패널: 구글 지도 + 컨트롤 바 */}
-            <section className="lg:col-span-5 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative min-h-[480px] lg:max-h-[85vh]">
-              <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 z-20">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <button
-                    onClick={() => setMapClickMode(mapClickMode === "add_new" ? null : "add_new")}
-                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold border transition ${
-                      mapClickMode === "add_new"
-                        ? "bg-amber-500 text-slate-950 border-amber-300 animate-pulse"
-                        : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
-                    }`}
-                  >
-                    {mapClickMode === "add_new" ? "🎯 지도 클릭 대기중 (취소)" : "📍 지도 클릭해 핀 추가"}
-                  </button>
+            {/* 중앙: 구글 한국어 지도 + 핀 드래그 이동 + 하단 고정 소요시간 배너 */}
+            <section className="lg:col-span-5 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative min-h-[450px] lg:max-h-[82vh]">
+              <div ref={mapContainerRef} className="w-full h-full flex-1 z-10" />
 
-                  {selectedPin && (
-                    <button
-                      onClick={() => setMapClickMode(mapClickMode === "move_selected" ? null : "move_selected")}
-                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold border transition ${
-                        mapClickMode === "move_selected"
-                          ? "bg-pink-500 text-white border-pink-300 animate-pulse"
-                          : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
-                      }`}
-                    >
-                      {mapClickMode === "move_selected"
-                        ? "🎯 옮길 위치를 지도에서 클릭!"
-                        : "🎯 선택 장소 위치 옮기기"}
-                    </button>
+              <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-none">
+                <div className="bg-slate-900/95 border border-slate-700 px-3 py-2 rounded-2xl shadow-lg pointer-events-auto text-xs font-bold text-slate-200">
+                  🖐️ 지도 위 <b>핀을 마우스/손가락으로 끌어다 놓으면</b> 위치가 바로 수정됩니다!
+                </div>
+                <button
+                  onClick={() => {
+                    if (mapInstanceRef.current && pins.length > 0) {
+                      const bounds = L.latLngBounds(pins.map((p) => [p.lat, p.lng]));
+                      mapInstanceRef.current.flyToBounds(bounds.pad(0.3), { duration: 0.8 });
+                    }
+                  }}
+                  className="bg-slate-900/95 hover:bg-slate-800 border border-slate-700 px-3 py-2 rounded-2xl text-xs font-extrabold text-white shadow-lg pointer-events-auto shrink-0"
+                >
+                  🔍 전체 보기
+                </button>
+              </div>
+
+              {(animatingInfo || lastCompletedSegment) && (
+                <div className="absolute bottom-4 left-4 right-4 z-30 bg-slate-900/95 backdrop-blur-xl border-2 border-indigo-500 rounded-2xl p-3.5 shadow-2xl">
+                  {animatingInfo ? (
+                    <>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-extrabold text-pink-300">
+                          🚌 이동 중... ({animatingInfo.progress}%)
+                        </span>
+                        <span className="text-xs font-black text-amber-300">
+                          예상 소요시간: {animatingInfo.transit.formatted}
+                        </span>
+                      </div>
+                      <div className="text-xs sm:text-sm font-extrabold text-white mb-2">
+                        📍 {animatingInfo.fromPin.name} ━━🚇━━▶ 🎯 {animatingInfo.toPin.name}
+                      </div>
+                    </>
+                  ) : (
+                    lastCompletedSegment && (
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-bold text-emerald-300">
+                            ✅ 이동 완료 구간 요약 (사라지지 않고 고정 표시)
+                          </div>
+                          <div className="text-sm font-black text-amber-300 mt-0.5">
+                            {lastCompletedSegment.fromPin.name} → {lastCompletedSegment.toPin.name} :{" "}
+                            <span className="underline">{lastCompletedSegment.transit.formatted}</span>{" "}
+                            ({lastCompletedSegment.transit.distanceKm}km)
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setLastCompletedSegment(null)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs font-bold"
+                        >
+                          닫기
+                        </button>
+                      </div>
+                    )
                   )}
                 </div>
-
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={handleFitAllPinsOnMap}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200"
-                  >
-                    🔍 전체 코스 보기
-                  </button>
-                  <button
-                    onClick={() => setMapTheme(mapTheme === "dark" ? "light" : "dark")}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-indigo-300"
-                  >
-                    {mapTheme === "dark" ? "☀️ 밝은 지도" : "🌙 다크 지도"}
-                  </button>
-                </div>
-              </div>
-
-              <div ref={mapContainerRef} className="w-full h-full flex-1 z-10 min-h-[420px]"></div>
-
-              <div className="absolute bottom-3 left-3 right-3 z-20 pointer-events-none flex justify-between items-end">
-                <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700 px-3.5 py-2 rounded-2xl shadow-lg pointer-events-auto text-[11px] font-bold text-slate-200">
-                  💡 지도 위 <b>마커를 드래그</b>하거나 상단 <b>'선택 장소 위치 옮기기'</b>를 누르면 1mm 단위로 위치 교정이 가능합니다.
-                </div>
-              </div>
+              )}
             </section>
 
-            {/* 우측 패널: 선택된 장소 상세 설정 */}
-            <section className="lg:col-span-3 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[85vh]">
+            {/* 우측: 선택된 장소 편집 (이름/카테고리 수정, 이동시간, 메모, 지출 품목) */}
+            <section className="lg:col-span-3 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl max-h-[82vh]">
               {selectedPin ? (
                 <>
-                  <div className="p-4 border-b border-slate-800 bg-gradient-to-br from-indigo-950/60 to-slate-900 space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-bold text-slate-400">일차:</span>
-                        <select
-                          value={selectedPin.day || 1}
-                          onChange={(e) => {
-                            const d = Number(e.target.value);
-                            setPins(prev => prev.map(p => p.id === selectedPin.id ? { ...p, day: d } : p));
-                          }}
-                          className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs font-extrabold text-indigo-300"
-                        >
-                          {[1, 2, 3, 4, 5, 6, 7].map(d => (
-                            <option key={d} value={d}>Day {d}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${selectedPin.lat},${selectedPin.lng}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[11px] font-extrabold text-indigo-300 hover:underline"
-                      >
-                        구글지도 앱 열기 ↗
-                      </a>
-                    </div>
-
+                  <div className="p-4 border-b border-slate-800 bg-gradient-to-br from-indigo-950/60 to-slate-900">
                     {editingPinId === selectedPin.id ? (
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          value={editNameText}
-                          onChange={(e) => setEditNameText(e.target.value)}
-                          className="flex-1 bg-slate-950 border border-indigo-500 rounded-xl px-3 py-1.5 text-sm text-white font-bold"
-                        />
-                        <button
-                          onClick={() => savePinName(selectedPin.id)}
-                          className="bg-emerald-600 text-white px-3 rounded-xl text-xs font-extrabold"
+                      <div className="space-y-2">
+                        <select
+                          value={editCategoryText}
+                          onChange={(e) => setEditCategoryText(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white"
                         >
-                          저장
-                        </button>
+                          <option>🏨 숙소·호텔</option>
+                          <option>📸 명소·포토존</option>
+                          <option>🍜 맛집</option>
+                          <option>☕ 카페·디저트</option>
+                          <option>🛍️ 쇼핑·드럭스토어</option>
+                          <option>✈️ 공항·교통</option>
+                        </select>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={editNameText}
+                            onChange={(e) => setEditNameText(e.target.value)}
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white"
+                          />
+                          <button
+                            onClick={() => handleSavePinEdit(selectedPin.id)}
+                            className="bg-emerald-500 text-slate-950 px-3 rounded-lg text-xs font-black"
+                          >
+                            저장
+                          </button>
+                        </div>
                       </div>
                     ) : (
-                      <div className="flex items-start justify-between gap-2">
-                        <h2 className="font-black text-base sm:text-lg text-white leading-snug">
-                          {selectedPin.name}
-                        </h2>
-                        <button
-                          onClick={() => {
-                            setEditingPinId(selectedPin.id);
-                            setEditNameText(selectedPin.name);
-                          }}
-                          className="text-slate-400 hover:text-white text-xs shrink-0 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700"
-                        >
-                          ✏️ 이름변경
-                        </button>
-                      </div>
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-indigo-400">
+                            코스 #{selectedPinIndex + 1} · {selectedPin.category}
+                          </span>
+                          <button
+                            onClick={() => {
+                              setEditingPinId(selectedPin.id);
+                              setEditNameText(selectedPin.name);
+                              setEditCategoryText(selectedPin.category);
+                            }}
+                            className="text-xs font-bold text-amber-300 bg-slate-800 px-2.5 py-1 rounded-lg hover:bg-slate-700"
+                          >
+                            ✏️ 이름/카테고리 수정
+                          </button>
+                        </div>
+                        <h2 className="font-black text-lg text-white mt-1">{selectedPin.name}</h2>
+                      </>
                     )}
 
-                    <div className="text-[11px] text-slate-400 flex items-center justify-between gap-2">
-                      <span className="truncate">{selectedPin.address || `${selectedPin.lat.toFixed(4)}, ${selectedPin.lng.toFixed(4)}`}</span>
-                      <button
-                        onClick={() => {
-                          if (editingCoordPinId === selectedPin.id) {
-                            setEditingCoordPinId(null);
-                          } else {
-                            setEditingCoordPinId(selectedPin.id);
-                            setEditLatText(String(selectedPin.lat));
-                            setEditLngText(String(selectedPin.lng));
-                          }
-                        }}
-                        className="text-[10px] text-indigo-400 hover:underline shrink-0"
-                      >
-                        좌표수정
-                      </button>
+                    {/* 고정 이동 시간 요약 */}
+                    <div className="mt-3 space-y-1.5 bg-slate-950/80 p-2.5 rounded-2xl border border-slate-800 text-xs">
+                      {prevTransitInfo ? (
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">⬅️ {prevTransitInfo.from.name}에서:</span>
+                          <span className="font-extrabold text-amber-300">
+                            🚌 약 {prevTransitInfo.info.formatted}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="text-slate-500 text-[11px]">🏁 첫 번째 출발 장소입니다</div>
+                      )}
+                      {nextTransitInfo && (
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                          <span className="text-slate-400">➡️ 다음 {nextTransitInfo.to.name}까지:</span>
+                          <span className="font-extrabold text-indigo-300">
+                            🚌 약 {nextTransitInfo.info.formatted}
+                          </span>
+                        </div>
+                      )}
                     </div>
-
-                    {editingCoordPinId === selectedPin.id && (
-                      <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-700 space-y-2">
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <div>
-                            <label className="text-[10px] text-slate-400">위도 (Lat)</label>
-                            <input
-                              type="text"
-                              value={editLatText}
-                              onChange={(e) => setEditLatText(e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-slate-400">경도 (Lng)</label>
-                            <input
-                              type="text"
-                              value={editLngText}
-                              onChange={(e) => setEditLngText(e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex justify-end gap-1.5">
-                          <button
-                            onClick={() => setEditingCoordPinId(null)}
-                            className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs"
-                          >
-                            취소
-                          </button>
-                          <button
-                            onClick={() => savePinCoords(selectedPin.id)}
-                            className="px-3 py-1 rounded-lg bg-indigo-600 text-white text-xs font-bold"
-                          >
-                            좌표 적용
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                    <div>
-                      <label className="block text-xs font-extrabold text-slate-300 mb-2">
-                        🏷️ 장소 카테고리 설정 <span className="text-indigo-400">({selectedPin.category})</span>
-                      </label>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {CATEGORY_LIST.map((cat) => {
-                          const active = selectedPin.category === cat.label;
-                          return (
-                            <button
-                              key={cat.id}
-                              type="button"
-                              onClick={() => updatePinCategory(selectedPin.id, cat.label)}
-                              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold text-left truncate border transition ${
-                                active
-                                  ? "bg-indigo-600 text-white border-indigo-400 shadow"
-                                  : "bg-slate-950/90 text-slate-300 border-slate-800 hover:border-slate-600"
-                              }`}
-                            >
-                              {cat.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
                     <div>
                       <label className="block text-xs font-extrabold text-slate-300 mb-1.5">
-                        📝 장소 메모 (예약번호·영업시간·꿀팁)
+                        📝 장소 메모
                       </label>
                       <textarea
                         rows={3}
                         value={selectedPin.memo}
-                        onChange={(e) =>
-                          setPins(prev => prev.map(p => p.id === selectedPin.id ? { ...p, memo: e.target.value } : p))
-                        }
-                        placeholder="체크인 시간, 필수 주문 메뉴 등을 적어두세요"
-                        className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:outline-none rounded-2xl p-3 text-xs text-white resize-none"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPins((prev) =>
+                            prev.map((p) => (p.id === selectedPin.id ? { ...p, memo: val } : p))
+                          );
+                        }}
+                        placeholder="체크인 시간, 살 것, 꿀팁 등을 적어두세요"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white resize-none"
                       />
                     </div>
 
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs font-extrabold text-slate-300">🛍️ 예산 / 지출 항목</label>
+                        <label className="text-xs font-extrabold text-slate-300">
+                          🛍️ 숙소비 / 살 것 / 예상 지출
+                        </label>
                         <span className="text-xs font-extrabold text-emerald-400">
-                          합계: {formatKRW((selectedPin.items || []).reduce((s, i) => s + Number(i.price || 0), 0))}
+                          합계: {formatKRW(selectedPin.items.reduce((s, i) => s + Number(i.price || 0), 0))}
                         </span>
                       </div>
 
                       <form onSubmit={handleAddItem} className="space-y-2 mb-3">
                         <input
                           type="text"
-                          placeholder="항목명 (예: 숙박비, 라멘, 입장권)"
+                          placeholder="품목명 (예: 숙소 비용, 라멘, 동전파스)"
                           value={newItemTitle}
                           onChange={(e) => setNewItemTitle(e.target.value)}
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
@@ -2036,7 +1272,7 @@
                           />
                           <button
                             type="submit"
-                            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shrink-0"
+                            className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white font-extrabold text-xs"
                           >
                             ＋ 추가
                           </button>
@@ -2044,26 +1280,22 @@
                       </form>
 
                       <div className="space-y-2">
-                        {(selectedPin.items || []).map((item) => (
+                        {selectedPin.items.map((item) => (
                           <div
                             key={item.id}
-                            className={`flex items-center justify-between p-2.5 rounded-xl border ${
-                              item.bought
-                                ? "bg-emerald-950/20 border-emerald-500/40"
-                                : "bg-slate-950/80 border-slate-800"
-                            }`}
+                            className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800"
                           >
-                            <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+                            <label className="flex items-center gap-2 cursor-pointer flex-1">
                               <input
                                 type="checkbox"
                                 checked={item.bought}
                                 onChange={() =>
-                                  setPins(prev =>
-                                    prev.map(p =>
+                                  setPins((prev) =>
+                                    prev.map((p) =>
                                       p.id === selectedPin.id
                                         ? {
                                             ...p,
-                                            items: p.items.map(it =>
+                                            items: p.items.map((it) =>
                                               it.id === item.id ? { ...it, bought: !it.bought } : it
                                             )
                                           }
@@ -2071,34 +1303,34 @@
                                     )
                                   )
                                 }
-                                className="rounded accent-emerald-500 w-4 h-4 shrink-0"
+                                className="rounded accent-emerald-500 w-4 h-4"
                               />
                               <span
-                                className={`text-xs font-bold truncate ${
+                                className={`text-xs font-bold ${
                                   item.bought ? "line-through text-slate-500" : "text-slate-200"
                                 }`}
                               >
                                 {item.title}
                               </span>
                             </label>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <div className="text-right">
-                                <div className="text-xs font-extrabold text-emerald-400">{formatKRW(item.price)}</div>
-                                <div className="text-[10px] text-slate-400">
-                                  ({formatJPY(Math.round(item.price / exchangeRate))})
-                                </div>
-                              </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-extrabold text-emerald-400">
+                                {formatKRW(item.price)}
+                              </span>
                               <button
                                 onClick={() =>
-                                  setPins(prev =>
-                                    prev.map(p =>
+                                  setPins((prev) =>
+                                    prev.map((p) =>
                                       p.id === selectedPin.id
-                                        ? { ...p, items: p.items.filter(it => it.id !== item.id) }
+                                        ? {
+                                            ...p,
+                                            items: p.items.filter((it) => it.id !== item.id)
+                                          }
                                         : p
                                     )
                                   )
                                 }
-                                className="text-slate-500 hover:text-rose-400 text-xs px-1"
+                                className="text-slate-500 hover:text-rose-400 text-xs"
                               >
                                 ✕
                               </button>
@@ -2110,393 +1342,150 @@
                   </div>
                 </>
               ) : (
-                <div className="p-8 text-center text-slate-400 text-xs">
-                  좌측 리스트나 지도에서 장소를 선택해 주세요.
-                </div>
+                <div className="p-8 text-center text-slate-400 text-xs">장소를 선택해주세요.</div>
               )}
             </section>
           </main>
 
-          {/* 탭 2: 예산 · 정산 화면 */}
+          {/* 탭 2: 총 금액 & 정산 */}
           {activeTab === "budget" && (
-            <main className="flex-1 max-w-[1400px] w-full mx-auto p-4 sm:p-6 space-y-6">
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xl">
-                <div>
-                  <h2 className="font-black text-lg text-white">💰 스마트 여행 예산 & 1/N 정산서</h2>
-                  <p className="text-xs text-slate-400 mt-0.5">엔화(¥)와 원화(₩) 실시간 환산 및 카테고리별 지출 분석</p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-4">
-                  <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 px-3.5 py-2 rounded-2xl">
-                    <span className="text-xs font-bold text-slate-400">💱 적용 환율 (1¥ 당):</span>
-                    <input
-                      type="number"
-                      step="0.05"
-                      value={exchangeRate}
-                      onChange={(e) => setExchangeRate(Number(e.target.value) || 9.05)}
-                      className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs font-extrabold text-amber-300 text-center"
-                    />
-                    <span className="text-xs text-slate-400">원 (100¥ = {Math.round(exchangeRate * 100)}원)</span>
+            <main className="flex-1 max-w-[1300px] w-full mx-auto p-4 lg:p-8 space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-slate-900 border border-slate-800 p-5 rounded-3xl">
+                  <span className="text-xs font-bold text-slate-400">💰 총 예상 금액</span>
+                  <div className="text-2xl font-black text-white mt-1">
+                    {formatKRW(budgetStats.totalPlannedKRW)}
                   </div>
-
-                  <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 px-3.5 py-2 rounded-2xl">
-                    <span className="text-xs font-bold text-slate-400">👥 정산 인원:</span>
-                    <button
-                      onClick={() => setPeopleCount(Math.max(1, peopleCount - 1))}
-                      className="w-6 h-6 rounded-lg bg-slate-800 text-white font-bold text-xs"
-                    >
-                      -
-                    </button>
-                    <span className="text-sm font-black text-indigo-400 px-2">{peopleCount}명</span>
-                    <button
-                      onClick={() => setPeopleCount(peopleCount + 1)}
-                      className="w-6 h-6 rounded-lg bg-slate-800 text-white font-bold text-xs"
-                    >
-                      +
-                    </button>
+                  <div className="text-sm font-bold text-amber-300 mt-0.5">
+                    약 {formatJPY(budgetStats.totalPlannedJPY)}
                   </div>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                  <div className="text-xs font-bold text-slate-400">총 계획 예산</div>
-                  <div className="text-2xl font-black text-white mt-2">{formatKRW(budgetStats.totalPlannedKRW)}</div>
-                  <div className="text-xs font-bold text-amber-400 mt-1">{formatJPY(budgetStats.totalPlannedJPY)}</div>
+                <div className="bg-slate-900 border border-emerald-500/30 p-5 rounded-3xl">
+                  <span className="text-xs font-bold text-emerald-400">✅ 결제 완료</span>
+                  <div className="text-2xl font-black text-emerald-400 mt-1">
+                    {formatKRW(budgetStats.totalBoughtKRW)}
+                  </div>
                 </div>
-
-                <div className="bg-slate-900 border border-emerald-500/30 rounded-3xl p-5 shadow-lg">
-                  <div className="text-xs font-bold text-emerald-400">실제 지출 완료 (체크됨)</div>
-                  <div className="text-2xl font-black text-emerald-400 mt-2">{formatKRW(budgetStats.totalBoughtKRW)}</div>
-                  <div className="text-xs font-bold text-slate-400 mt-1">{formatJPY(budgetStats.totalBoughtJPY)}</div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                  <div className="text-xs font-bold text-slate-400">남은 예정 지출</div>
-                  <div className="text-2xl font-black text-indigo-300 mt-2">{formatKRW(budgetStats.remainingKRW)}</div>
-                  <div className="text-xs font-bold text-slate-400 mt-1">{formatJPY(budgetStats.remainingJPY)}</div>
-                </div>
-
-                <div className="bg-gradient-to-br from-indigo-950 to-slate-900 border border-indigo-500/40 rounded-3xl p-5 shadow-lg">
-                  <div className="text-xs font-bold text-indigo-300">1인당 더치페이 ({peopleCount}명 기준)</div>
-                  <div className="text-2xl font-black text-white mt-2">{formatKRW(budgetStats.perPersonKRW)}</div>
-                  <div className="text-xs font-bold text-amber-300 mt-1">{formatJPY(budgetStats.perPersonJPY)} / 인</div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4">
-                  <h3 className="font-extrabold text-base text-white">📊 카테고리별 예산 비중</h3>
-                  {Object.keys(budgetStats.byCategory).length === 0 ? (
-                    <p className="text-xs text-slate-400 py-6 text-center">등록된 지출 내역이 없습니다.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {Object.entries(budgetStats.byCategory).map(([cat, info]) => {
-                        if (info.plannedKRW === 0) return null;
-                        const pct = budgetStats.totalPlannedKRW > 0
-                          ? Math.round((info.plannedKRW / budgetStats.totalPlannedKRW) * 100)
-                          : 0;
-                        const meta = getCategoryMeta(cat);
-                        return (
-                          <div key={cat} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-extrabold text-white">{cat}</span>
-                              <span className="font-extrabold text-emerald-400">
-                                {formatKRW(info.plannedKRW)} ({pct}%)
-                              </span>
-                            </div>
-                            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                              <div
-                                style={{ width: `${pct}%`, backgroundColor: meta.color }}
-                                className="h-full rounded-full"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4">
-                  <h3 className="font-extrabold text-base text-white">🧾 장소별 상세 지출 리스트</h3>
-                  <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
-                    {pins.map((pin, idx) => {
-                      const sumKRW = (pin.items || []).reduce((s, it) => s + Number(it.price || 0), 0);
-                      return (
-                        <div key={pin.id} className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-black text-indigo-400">#{idx + 1}</span>
-                              <span className="text-xs font-bold text-slate-400">[{pin.category}]</span>
-                              <span className="text-sm font-extrabold text-white">{pin.name}</span>
-                            </div>
-                            <span className="text-xs font-extrabold text-emerald-400">{formatKRW(sumKRW)}</span>
-                          </div>
-                          {(pin.items || []).length > 0 && (
-                            <div className="mt-2 pt-2 border-t border-slate-900 space-y-1">
-                              {pin.items.map(it => (
-                                <div key={it.id} className="flex items-center justify-between text-xs text-slate-300">
-                                  <span>• {it.title} {it.bought ? "✅" : ""}</span>
-                                  <span>{formatKRW(it.price)} ({formatJPY(Math.round(it.price / exchangeRate))})</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                <div className="bg-slate-900 border border-indigo-500/40 p-5 rounded-3xl">
+                  <span className="text-xs font-bold text-indigo-300">👥 1인당 정산 ({peopleCount}명 기준)</span>
+                  <div className="text-2xl font-black text-white mt-1">
+                    {formatKRW(budgetStats.perPersonKRW)}
                   </div>
                 </div>
               </div>
             </main>
           )}
 
-          {/* 모달 1: 장소 추가 */}
+          {/* =================================================================
+              모달: 구글 맵 링크 해독 & 한글/일본어/영어 실제 검색 결과 목록
+             ================================================================= */}
           {showAddModal && (
-            <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-5 my-auto max-h-[92vh] overflow-y-auto">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <div>
-                    <h3 className="font-extrabold text-base sm:text-lg text-white">
-                      📍 장소 추가 (구글 지도 링크 · 장소 이름 검색)
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      카테고리를 먼저 고르거나 검색하면 장소 성격에 맞춰 자동으로 카테고리가 추천됩니다!
-                    </p>
-                  </div>
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-base sm:text-lg text-white">
+                    📍 구글 지도 링크 & 다국어(한/일/영) 장소 검색
+                  </h3>
                   <button
-                    onClick={() => {
-                      setShowAddModal(false);
-                      setSearchStatusMsg("");
-                    }}
-                    className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-bold"
+                    onClick={() => setShowAddModal(false)}
+                    className="text-slate-400 hover:text-white text-sm font-bold"
                   >
                     ✕ 닫기
                   </button>
                 </div>
 
-                {/* 1단계: 일차 & 카테고리 선택 UI */}
-                <div className="space-y-2.5 bg-slate-950/90 p-3.5 rounded-2xl border border-slate-800">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <span className="text-xs font-extrabold text-indigo-300">
-                      1️⃣ 카테고리 & 일차 선택 {isCategoryLockedByUser ? "(직접 선택됨 ✓)" : "(검색어에 따라 자동 추천됨)"}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-slate-400 font-bold">여행 일차:</span>
-                      <select
-                        value={newPinDay}
-                        onChange={(e) => setNewPinDay(Number(e.target.value))}
-                        className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-extrabold text-amber-300"
-                      >
-                        {[1, 2, 3, 4, 5, 6, 7].map(d => (
-                          <option key={d} value={d}>Day {d}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-                    {CATEGORY_LIST.map((cat) => {
-                      const isSelected = customCategory === cat.label;
-                      return (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          onClick={() => {
-                            setCustomCategory(cat.label);
-                            setIsCategoryLockedByUser(true);
-                            setShowCustomCategoryInput(false);
-                          }}
-                          className={`px-2.5 py-2 rounded-xl text-xs font-extrabold truncate border transition ${
-                            isSelected
-                              ? "bg-indigo-600 text-white border-indigo-400 shadow-lg scale-[1.02]"
-                              : "bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-600"
-                          }`}
-                        >
-                          {cat.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="pt-1 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowCustomCategoryInput(!showCustomCategoryInput)}
-                      className="text-[11px] font-bold text-slate-400 hover:text-indigo-300 underline"
-                    >
-                      + 원하는 카테고리가 없나요? 직접 입력하기
-                    </button>
-                    {showCustomCategoryInput && (
-                      <div className="flex items-center gap-1.5 flex-1">
-                        <input
-                          type="text"
-                          placeholder="예: 🍡 간식투어, ⛩️ 신사순례"
-                          value={customCategoryInput}
-                          onChange={(e) => setCustomCategoryInput(e.target.value)}
-                          className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (customCategoryInput.trim()) {
-                              setCustomCategory(customCategoryInput.trim());
-                              setIsCategoryLockedByUser(true);
-                              setShowCustomCategoryInput(false);
-                            }
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-bold"
-                        >
-                          적용
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2단계: 구글 링크 또는 장소 이름 검색창 */}
-                <form onSubmit={handleSmartSearch} className="space-y-2">
-                  <label className="block text-xs font-extrabold text-slate-200">
-                    2️⃣ 구글 지도 링크 붙여넣기 또는 장소 이름(한국어/일본어/영어) 검색
-                  </label>
+                <form onSubmit={handleSearchPlacesAndLinks} className="space-y-2.5">
                   <div className="flex gap-2">
+                    <select
+                      value={customCategory}
+                      onChange={(e) => setCustomCategory(e.target.value)}
+                      className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white"
+                    >
+                      <option>🏨 숙소·호텔</option>
+                      <option>📸 명소·포토존</option>
+                      <option>🍜 맛집</option>
+                      <option>☕ 카페·디저트</option>
+                      <option>🛍️ 쇼핑·드럭스토어</option>
+                      <option>✈️ 공항·교통</option>
+                    </select>
                     <input
                       type="text"
                       value={searchKeyword}
                       onChange={(e) => setSearchKeyword(e.target.value)}
-                      placeholder="예: 아마넥 호텔 오사카 난바, 이치란 도톤보리, 또는 구글지도 링크 붙여넣기"
-                      className="flex-1 bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:outline-none rounded-xl px-3.5 py-2.5 text-sm text-white"
+                      placeholder="구글맵 링크 붙여넣기 또는 한글/일본어/영어 장소 검색"
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
                     />
                     <button
                       type="submit"
                       disabled={isSearching}
-                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shrink-0 shadow-lg"
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shrink-0"
                     >
-                      {isSearching ? "해독·검색중..." : "🔍 위치 찾기"}
+                      {isSearching ? "검색중..." : "🔍 목록 검색"}
                     </button>
                   </div>
+
+                  {translatedInfo && (
+                    <div className="text-[11px] text-indigo-300 bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-500/30">
+                      🌐 자동 다국어 검색 적용됨: <b>{translatedInfo.original}</b> · 일문:{" "}
+                      <b>{translatedInfo.ja}</b> · 영문: <b>{translatedInfo.en}</b>
+                    </div>
+                  )}
                 </form>
 
-                {searchStatusMsg && (
-                  <div className="p-3 rounded-2xl bg-indigo-950/60 border border-indigo-500/40 text-xs text-indigo-200 space-y-2">
-                    <div>{searchStatusMsg}</div>
-                    {/goo\.gl|maps\.app\.goo\.gl/i.test(searchKeyword) && (
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        <a
-                          href={searchKeyword.match(/(https?:\/\/[^\s]+)/i)?.[1] || searchKeyword}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white font-extrabold text-xs inline-block"
-                        >
-                          🔗 새 탭에서 이 단축링크 열기 ↗ (열린 구글지도 주소창 링크를 복사해 오면 100% 성공!)
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                )}
-
+                {/* 실제 검색 결과 목록 표시 */}
                 {searchResults.length > 0 && (
                   <div className="space-y-2 max-h-64 overflow-y-auto bg-slate-950 p-3 rounded-2xl border border-indigo-500/50">
-                    <div className="text-xs font-extrabold text-indigo-300 px-1 flex items-center justify-between">
-                      <span>🎯 검색된 정확한 위치 ({searchResults.length}건) — 클릭하면 선택한 카테고리로 추가됩니다</span>
-                      <span className="text-[11px] text-amber-300">현재 카테고리: {customCategory}</span>
+                    <div className="text-xs font-extrabold text-emerald-400 px-1">
+                      ✅ 검색 결과 목록 ({searchResults.length}건) — 원하는 장소를 클릭하면 핀이 꽂힙니다
                     </div>
                     {searchResults.map((res, idx) => (
                       <div
                         key={idx}
-                        className="p-3 rounded-xl bg-slate-900 hover:bg-indigo-950/60 border border-slate-800 hover:border-indigo-500 transition flex items-center justify-between gap-3"
+                        onClick={() =>
+                          addPinToMap({
+                            name: res.name,
+                            category: customCategory,
+                            address: res.address,
+                            lat: res.lat,
+                            lng: res.lng
+                          })
+                        }
+                        className="p-3 rounded-xl bg-slate-900 hover:bg-indigo-950/80 border border-slate-800 hover:border-indigo-500 cursor-pointer flex items-center justify-between gap-3 transition"
                       >
-                        <div
-                          onClick={() =>
-                            addPinToMap({
-                              name: res.name,
-                              category: customCategory,
-                              address: res.address,
-                              lat: res.lat,
-                              lng: res.lng,
-                              day: newPinDay
-                            })
-                          }
-                          className="flex-1 min-w-0 cursor-pointer"
-                        >
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-extrabold text-white">{res.name}</span>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-bold">
-                              {res.source}
-                            </span>
-                            {res.category && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
-                                추천: {res.category}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs text-slate-400 mt-1 truncate">
-                            {res.address || `${Number(res.lat).toFixed(4)}, ${Number(res.lng).toFixed(4)}`}
+                        <div>
+                          <div className="text-sm font-extrabold text-white">{res.name}</div>
+                          <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                            {res.address}
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handlePreviewSearchResult(res)}
-                            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold"
-                          >
-                            👁️ 지도확인
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              addPinToMap({
-                                name: res.name,
-                                category: customCategory,
-                                address: res.address,
-                                lat: res.lat,
-                                lng: res.lng,
-                                day: newPinDay
-                              })
-                            }
-                            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold"
-                          >
-                            ＋ 선택 추가
-                          </button>
-                        </div>
+                        <span className="px-3 py-1.5 rounded-xl bg-emerald-500 text-slate-950 text-xs font-black shrink-0">
+                          ＋ 핀 꽂기
+                        </span>
                       </div>
                     ))}
                   </div>
                 )}
 
-                <div className="space-y-2 pt-1 border-t border-slate-800">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-extrabold text-slate-300">⚡ 오사카·교토 인기 스팟 원클릭 추가</span>
-                    <button
-                      type="button"
-                      onClick={handleManualCenterPinAdd}
-                      className="text-[11px] font-bold text-amber-400 hover:underline"
-                    >
-                      📍 현재 지도 화면 중앙에 수동으로 핀 만들기
-                    </button>
+                {/* 빠른 프리셋 */}
+                <div>
+                  <div className="text-xs font-bold text-slate-400 mb-2">
+                    🇯🇵 자주 찾는 오사카 명소 & 숙소 원클릭 추가
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {PRESET_PLACES.map((preset, i) => (
-                      <button
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {PRESET_PLACES.map((p, i) => (
+                      <div
                         key={i}
-                        type="button"
-                        onClick={() => {
-                          addPinToMap({
-                            name: preset.name,
-                            category: isCategoryLockedByUser ? customCategory : preset.category,
-                            address: preset.address,
-                            lat: preset.lat,
-                            lng: preset.lng,
-                            day: newPinDay
-                          });
-                          showToast(`📍 '${preset.name}' 장소가 추가되었습니다!`);
-                        }}
-                        className="px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-400 text-xs font-bold text-slate-200 transition"
+                        onClick={() => addPinToMap(p)}
+                        className="p-2.5 rounded-xl bg-slate-950 hover:bg-indigo-950/50 border border-slate-800 cursor-pointer flex items-center justify-between"
                       >
-                        {preset.category.split(" ")[0]} {preset.name}
-                      </button>
+                        <div>
+                          <div className="text-xs font-extrabold text-white">{p.name}</div>
+                          <div className="text-[10px] text-slate-400">
+                            {p.category} · {p.address}
+                          </div>
+                        </div>
+                        <span className="text-xs font-bold text-indigo-400">추가 ＋</span>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -2504,44 +1493,54 @@
             </div>
           )}
 
-          {/* 모달 2: 초기화 확인 모달 */}
+          {/* 초기화 모달 */}
           {showResetModal && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
-                <h3 className="font-extrabold text-lg text-white">🔄 일정 초기화</h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  현재 저장된 여행 장소를 어떻게 초기화할까요?
-                </p>
-                <div className="space-y-2 pt-2">
-                  <button
-                    onClick={() => {
-                      setPins([]);
-                      setSelectedPinId(null);
-                      setShowResetModal(false);
-                      showToast("🗑️ 모든 일정이 깨끗하게 비워졌습니다.");
-                    }}
-                    className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs"
-                  >
-                    🗑️ 모든 장소 완전히 비우기 (백지상태에서 시작)
-                  </button>
-                  <button
-                    onClick={() => {
-                      setPins(DEFAULT_SAMPLE_PINS);
-                      setSelectedPinId(DEFAULT_SAMPLE_PINS[0]?.id || null);
-                      setShowResetModal(false);
-                      showToast("🔄 기본 샘플 일정으로 초기화되었습니다.");
-                    }}
-                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs"
-                  >
-                    📍 기본 샘플(도톤보리) 상태로 초기화
-                  </button>
+              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-base text-white">🔄 여행 계획 초기화</h3>
                   <button
                     onClick={() => setShowResetModal(false)}
-                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs"
+                    className="text-slate-400 hover:text-white text-sm font-bold"
                   >
-                    취소
+                    ✕
                   </button>
                 </div>
+                <button
+                  onClick={() => {
+                    setPins((prev) => prev.map((p) => ({ ...p, completed: false })));
+                    setLastCompletedSegment(null);
+                    setShowResetModal(false);
+                    showToast("🔄 완료(OK) 체크만 초기화되었습니다.");
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 text-left text-xs font-extrabold text-indigo-300"
+                >
+                  1️⃣ [OK 방문 완료] 상태만 초기화하기
+                </button>
+                <button
+                  onClick={() => {
+                    setPins([]);
+                    setSelectedPinId(null);
+                    setLastCompletedSegment(null);
+                    setShowResetModal(false);
+                    showToast("🗑️ 모든 핀이 삭제되었습니다.");
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-rose-600/20 border border-rose-500/40 text-left text-xs font-extrabold text-rose-300"
+                >
+                  2️⃣ 모든 핀 싹 지우기 (백지상태로 시작)
+                </button>
+                <button
+                  onClick={() => {
+                    setPins(DEFAULT_SAMPLE_PINS);
+                    setSelectedPinId(DEFAULT_SAMPLE_PINS[0].id);
+                    setLastCompletedSegment(null);
+                    setShowResetModal(false);
+                    showToast("✨ 기본 코스가 복원되었습니다.");
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-left text-xs font-extrabold text-emerald-300"
+                >
+                  3️⃣ 기본 샘플 코스 복원하기
+                </button>
               </div>
             </div>
           )}
