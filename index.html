@@ -23,14 +23,55 @@
   <style>
     body {
       font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      background-color: #0f172a;
-      color: #f8fafc;
       overflow-x: hidden;
       -webkit-tap-highlight-color: transparent;
+      transition: background-color 0.25s ease, color 0.25s ease;
     }
-    ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
-    ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.5); border-radius: 9999px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.45); border-radius: 9999px; }
+
+    /* ☀️ 라이트 모드 (밝은 화면) 글로벌 오버라이드 스타일 */
+    .theme-light {
+      background-color: #f8fafc !important;
+      color: #0f172a !important;
+    }
+    .theme-light .bg-slate-950 { background-color: #f1f5f9 !important; }
+    .theme-light .bg-slate-950\/90,
+    .theme-light .bg-slate-950\/85,
+    .theme-light .bg-slate-950\/80,
+    .theme-light .bg-slate-950\/60 { background-color: rgba(241, 245, 249, 0.95) !important; }
+    .theme-light .bg-slate-900,
+    .theme-light .bg-slate-900\/95,
+    .theme-light .bg-slate-900\/90 { background-color: #ffffff !important; }
+    .theme-light .bg-slate-800,
+    .theme-light .bg-slate-800\/90,
+    .theme-light .bg-slate-800\/70,
+    .theme-light .bg-slate-800\/50 { background-color: #f8fafc !important; }
+    .theme-light .border-slate-800,
+    .theme-light .border-slate-700,
+    .theme-light .border-slate-700\/70 { border-color: #e2e8f0 !important; }
+    .theme-light .text-white,
+    .theme-light .text-slate-100,
+    .theme-light .text-slate-200 { color: #0f172a !important; }
+    .theme-light .text-slate-300,
+    .theme-light .text-slate-400 { color: #475569 !important; }
+    .theme-light .text-amber-300 { color: #d97706 !important; }
+    .theme-light .text-emerald-400,
+    .theme-light .text-emerald-300 { color: #059669 !important; }
+    .theme-light .text-indigo-400,
+    .theme-light .text-indigo-300 { color: #4f46e5 !important; }
+    .theme-light .bg-indigo-950\/60,
+    .theme-light .bg-indigo-950\/35,
+    .theme-light .bg-indigo-950\/40 { background-color: #eef2ff !important; }
+    .theme-light .from-indigo-950\/60 { --tw-gradient-from: #eef2ff !important; }
+    .theme-light .to-slate-900 { --tw-gradient-to: #ffffff !important; }
+    .theme-light .from-emerald-950\/60 { --tw-gradient-from: #ecfdf5 !important; }
+    .theme-light .via-slate-900 { --tw-gradient-via: #ffffff !important; }
+    .theme-light .to-indigo-950\/60 { --tw-gradient-to: #eef2ff !important; }
+
+    /* 버튼 내부 흰색 글씨는 라이트 모드에서도 그대로 유지 */
+    .theme-light .keep-white { color: #ffffff !important; }
 
     .custom-pin {
       display: flex;
@@ -50,7 +91,7 @@
       transform: rotate(45deg);
       font-weight: 900;
       font-size: 14px;
-      color: #ffffff;
+      color: #ffffff !important;
     }
     .pin-active {
       animation: pulse-ring 1.5s infinite;
@@ -109,21 +150,43 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
 
-    // 🔒 영구 고정 저장소 키 (이제 코드 업데이트를 해도 절대 바뀌지 않습니다!)
+    // 🔒 영구 고정 저장소 키
     const STORAGE_KEY_PINS = "travel_planner_master_pins";
     const STORAGE_KEY_TITLE = "travel_planner_master_title";
     const STORAGE_KEY_RATE = "travel_planner_master_rate";
+    const STORAGE_KEY_NOTES = "travel_planner_master_notes";
+    const STORAGE_KEY_CHECKLIST = "travel_planner_master_checklist";
+    const STORAGE_KEY_THEME = "travel_planner_master_theme";
 
-    // 🔄 이전 버전(v1 ~ v13)에 저장되어 있던 내 여행 데이터를 자동으로 찾아 복구하는 함수
+    const DEFAULT_NOTE_PAD = [
+      {
+        id: "note-main",
+        title: "✈️ 우리들의 여행 자유 메모장",
+        content: "",
+        updatedAt: new Date().toLocaleString("ko-KR")
+      },
+      {
+        id: "note-food",
+        title: "🍜 가보고 싶은 맛집 & 간식 리스트",
+        content: "",
+        updatedAt: new Date().toLocaleString("ko-KR")
+      },
+      {
+        id: "note-info",
+        title: "🏨 항공편 · 숙소 예약번호 · 중요 메모",
+        content: "",
+        updatedAt: new Date().toLocaleString("ko-KR")
+      }
+    ];
+
     function loadSavedPinsWithMigration() {
       try {
         const masterData = localStorage.getItem(STORAGE_KEY_PINS);
         if (masterData) {
           const parsed = JSON.parse(masterData);
-          if (Array.isArray(parsed)) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
         }
 
-        // 이전 버전 키들을 최신순으로 스캔하여 사용자가 직접 넣었던 데이터 발굴
         const legacyKeys = [
           "travel_planner_pins_v13",
           "travel_planner_pins_v12",
@@ -138,36 +201,24 @@
           "travel_planner_pins"
         ];
 
-        let fallbackCandidate = null;
-
         for (const key of legacyKeys) {
           const raw = localStorage.getItem(key);
           if (!raw) continue;
           try {
             const arr = JSON.parse(raw);
             if (!Array.isArray(arr) || arr.length === 0) continue;
-
-            // 기본 샘플(pin-101, pin-102 등)이 아닌 사용자가 직접 추가한 핀이 있는지 확인
             const hasUserCreatedPin = arr.some(
               (p) =>
                 p &&
                 typeof p.id === "string" &&
                 !["pin-101", "pin-102", "pin-103", "pin-104"].includes(p.id)
             );
-
             if (hasUserCreatedPin) {
-              // 샘플 핀(글리코상, 이치란 등)이 섞여 있다면 걸러내고 내 데이터만 복원하거나 전체 복원
               localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(arr));
               return arr;
             }
-
-            if (!fallbackCandidate) {
-              fallbackCandidate = arr;
-            }
           } catch (e) {}
         }
-
-        // 사용자가 입력한 적이 없으면 글리코상 같은 더미 없이 깨끗한 빈 배열([])로 시작!
         return [];
       } catch (e) {
         return [];
@@ -181,7 +232,7 @@
         const old = localStorage.getItem(`travel_planner_title_v${i}`);
         if (old && old !== "여행 계획") return old;
       }
-      return "나의 일본 여행";
+      return "우리의 일본 여행 ✈️";
     }
 
     // 📊 구글 맵 빅데이터 기반 장소/카테고리별 1인당 평균 사용 금액 추론 엔진
@@ -301,7 +352,6 @@
       return `${remMins}분`;
     }
 
-    // 🚶 도보 시간 + 🚇 대중교통 시간 2가지 동시 자동 계산 함수
     function estimateTransitInfo(pinA, pinB) {
       if (!pinA || !pinB) return null;
       const straightKm = getDistanceKm(pinA.lat, pinA.lng, pinB.lat, pinB.lng);
@@ -344,7 +394,6 @@
       };
     }
 
-    // ⚡ 최단 경로 자동 재구성 알고리즘
     function optimizePinsShortestRoute(pinList) {
       if (!pinList || pinList.length <= 2) return pinList;
 
@@ -446,7 +495,9 @@
     }
 
     function App() {
-      // 🔒 초기 로드 시 이전 버전의 내 데이터를 자동 마이그레이션 & 더미 샘플 자동생성 완전 제거
+      // ☀️ 테마 상태 (light / dark)
+      const [theme, setTheme] = useState(() => localStorage.getItem(STORAGE_KEY_THEME) || "light");
+
       const [pins, setPins] = useState(() => loadSavedPinsWithMigration());
       const [tripTitle, setTripTitle] = useState(() => loadSavedTitleWithMigration());
       const [exchangeRate, setExchangeRate] = useState(
@@ -454,8 +505,35 @@
       );
       const [peopleCount, setPeopleCount] = useState(2);
 
+      // 📝 대형 자유 메모장 & 체크리스트 상태
+      const [notes, setNotes] = useState(() => {
+        const saved = localStorage.getItem(STORAGE_KEY_NOTES);
+        return saved ? JSON.parse(saved) : DEFAULT_NOTE_PAD;
+      });
+      const [activeNoteId, setActiveNoteId] = useState("note-main");
+      const [checklist, setChecklist] = useState(() => {
+        const saved = localStorage.getItem(STORAGE_KEY_CHECKLIST);
+        return saved
+          ? JSON.parse(saved)
+          : [
+              { id: "chk-1", text: "여권 및 비짓재팬웹 QR 캡처", done: false },
+              { id: "chk-2", text: "돼지코(110V 어댑터) & 보조배터리", done: false },
+              { id: "chk-3", text: "트래블로그/트래블월렛 카드 & 엔화 현금", done: false }
+            ];
+      });
+      const [newCheckText, setNewCheckText] = useState("");
+
+      // ☁️ 실시간 클라우드 동기화 상태
+      const [syncStatus, setSyncStatus] = useState("connecting"); // connecting | synced | saving | offline
+      const [lastSyncedTime, setLastSyncedTime] = useState("");
+      const isInitialCloudLoadedRef = useRef(false);
+      const isApplyingRemoteRef = useRef(false);
+      const lastUpdatedAtRef = useRef(null);
+      const saveTimeoutRef = useRef(null);
+
+      // 탭 상태: itinerary(지도&코스) | notepad(대형 메모장) | budget(예산·정산)
       const [activeTab, setActiveTab] = useState("itinerary");
-      const [mobileView, setMobileView] = useState("split");
+      const [mobileView, setMobileView] = useState("split"); // split | list | detail | notepad | budget
 
       const [selectedPinId, setSelectedPinId] = useState(() => {
         const initial = loadSavedPinsWithMigration();
@@ -496,10 +574,20 @@
 
       const showToast = (msg) => {
         setToastMsg(msg);
-        setTimeout(() => setToastMsg(null), 4000);
+        setTimeout(() => setToastMsg(null), 3800);
       };
 
-      // 🔒 영구 고정 키에 자동 저장
+      // 테마 변경 시 body 클래스에도 적용
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_THEME, theme);
+        if (theme === "light") {
+          document.body.classList.add("theme-light");
+        } else {
+          document.body.classList.remove("theme-light");
+        }
+      }, [theme]);
+
+      // 로컬 저장소 백업 유지
       useEffect(() => {
         localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(pins));
       }, [pins]);
@@ -509,6 +597,134 @@
       useEffect(() => {
         localStorage.setItem(STORAGE_KEY_RATE, String(exchangeRate));
       }, [exchangeRate]);
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(notes));
+      }, [notes]);
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_CHECKLIST, JSON.stringify(checklist));
+      }, [checklist]);
+
+      // =========================================================================
+      // ☁️ 1. 클라우드 서버(/api/sync)에서 최신 데이터 불러오기 & 자동 병합
+      // =========================================================================
+      const fetchCloudData = async (isManual = false) => {
+        try {
+          if (isManual) setSyncStatus("connecting");
+          const res = await fetch(`/api/sync?t=${Date.now()}`);
+          if (!res.ok) {
+            setSyncStatus("offline");
+            return;
+          }
+          const json = await res.json();
+
+          if (json.exists && json.data) {
+            const remote = json.data;
+
+            // 이미 최신 버전이면 스킵
+            if (!isManual && lastUpdatedAtRef.current && remote.updatedAt === lastUpdatedAtRef.current) {
+              setSyncStatus("synced");
+              return;
+            }
+
+            isApplyingRemoteRef.current = true;
+            lastUpdatedAtRef.current = remote.updatedAt;
+
+            // 만약 클라우드는 비어있는데 내 기기(맥북 등)에 기존 핀이 있다면 내 기기 데이터를 클라우드로 업로드!
+            if ((!remote.pins || remote.pins.length === 0) && pins.length > 0 && !isInitialCloudLoadedRef.current) {
+              isApplyingRemoteRef.current = false;
+              isInitialCloudLoadedRef.current = true;
+              await pushCloudData({ pins, tripTitle, exchangeRate, peopleCount, notes, checklist });
+              return;
+            }
+
+            if (Array.isArray(remote.pins)) {
+              setPins(remote.pins);
+              if (remote.pins.length > 0 && !selectedPinId) {
+                setSelectedPinId(remote.pins[0].id);
+              }
+            }
+            if (remote.tripTitle) setTripTitle(remote.tripTitle);
+            if (remote.exchangeRate) setExchangeRate(Number(remote.exchangeRate));
+            if (remote.peopleCount) setPeopleCount(Number(remote.peopleCount));
+            if (Array.isArray(remote.notes) && remote.notes.length > 0) setNotes(remote.notes);
+            if (Array.isArray(remote.checklist)) setChecklist(remote.checklist);
+
+            setLastSyncedTime(new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
+            setSyncStatus("synced");
+
+            setTimeout(() => {
+              isApplyingRemoteRef.current = false;
+              isInitialCloudLoadedRef.current = true;
+            }, 300);
+
+            if (isManual) {
+              showToast("☁️ 클라우드에서 최신 여행 일정과 메모를 동기화했습니다!");
+            }
+          } else {
+            // 클라우드에 아직 파일이 없으면 현재 기기의 데이터를 첫 기준점으로 즉시 업로드
+            isInitialCloudLoadedRef.current = true;
+            await pushCloudData({ pins, tripTitle, exchangeRate, peopleCount, notes, checklist });
+          }
+        } catch (e) {
+          setSyncStatus("offline");
+          isInitialCloudLoadedRef.current = true;
+        }
+      };
+
+      // ☁️ 2. 변경 사항을 클라우드 서버(/api/sync)에 저장하기
+      const pushCloudData = async (payload) => {
+        try {
+          setSyncStatus("saving");
+          const res = await fetch("/api/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            const json = await res.json();
+            if (json.updatedAt) lastUpdatedAtRef.current = json.updatedAt;
+            setLastSyncedTime(new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
+            setSyncStatus("synced");
+          } else {
+            setSyncStatus("offline");
+          }
+        } catch (e) {
+          setSyncStatus("offline");
+        }
+      };
+
+      // 첫 실행 시 클라우드 불러오기 + 12초마다 백그라운드 자동 동기화 (여자친구 폰 실시간 반영)
+      useEffect(() => {
+        fetchCloudData(false);
+        const timer = setInterval(() => {
+          if (!isApplyingRemoteRef.current && syncStatus !== "saving") {
+            fetchCloudData(false);
+          }
+        }, 12000);
+        return () => clearInterval(timer);
+      }, []);
+
+      // 내 기기에서 핀/제목/환율/메모장/체크리스트 수정 시 1초 뒤 클라우드 자동 저장
+      useEffect(() => {
+        if (!isInitialCloudLoadedRef.current || isApplyingRemoteRef.current) return;
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+        setSyncStatus("saving");
+        saveTimeoutRef.current = setTimeout(() => {
+          pushCloudData({
+            pins,
+            tripTitle,
+            exchangeRate,
+            peopleCount,
+            notes,
+            checklist
+          });
+        }, 1000);
+
+        return () => {
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        };
+      }, [pins, tripTitle, exchangeRate, peopleCount, notes, checklist]);
 
       useEffect(() => {
         setTimeout(() => {
@@ -518,7 +734,6 @@
         }, 150);
       }, [mobileView, activeTab]);
 
-      // 만약 이전 버전 저장소에서 복원 가능한 데이터가 더 있는지 수동으로도 불러올 수 있는 함수
       const handleRecoverPreviousStorageData = () => {
         const allKeys = Object.keys(localStorage).filter((k) =>
           k.startsWith("travel_planner_pins")
@@ -529,7 +744,6 @@
             const arr = JSON.parse(localStorage.getItem(k));
             if (Array.isArray(arr)) {
               arr.forEach((item) => {
-                // 기본 샘플(글리코상, 이치란) 제외하고 내가 넣었던 핀만 모두 수집
                 const isDefaultSample = ["pin-101", "pin-102", "pin-103", "pin-104"].includes(
                   item.id
                 );
@@ -551,21 +765,10 @@
             return merged;
           });
           setShowResetModal(false);
-          showToast(`✨ 이전 버전에 남아 있던 내 장소 ${recovered.length}곳을 모두 복구했습니다!`);
+          showToast(`✨ 기기에 남아 있던 장소 ${recovered.length}곳을 찾아 클라우드에 합쳤습니다!`);
         } else {
-          showToast("이전 버전 저장소에서 추가로 발견된 장소가 없습니다.");
+          showToast("이 기기에서 추가로 발견된 이전 장소가 없습니다.");
         }
-      };
-
-      // 거슬리는 기본 샘플(글리코상, 도톤보리, 이치란 등)만 원클릭으로 싹 지우는 함수
-      const handleRemoveSamplePinsOnly = () => {
-        const sampleIds = ["pin-101", "pin-102", "pin-103", "pin-104"];
-        const sampleNames = ["오사카 도톤보리 (글리코상)", "이치란 라멘 도톤보리점", "우메다 스카이빌딩 공중정원"];
-        setPins((prev) =>
-          prev.filter((p) => !sampleIds.includes(p.id) && !sampleNames.includes(p.name))
-        );
-        setShowResetModal(false);
-        showToast("🧹 기본 샘플(글리코상·도톤보리 등)만 깔끔하게 제거했습니다!");
       };
 
       const selectedPinIndex = useMemo(
@@ -788,14 +991,13 @@
               )
             );
             setSelectedPinId(pin.id);
-            showToast(`📍 '${pin.name}' 위치가 이동되었습니다!`);
+            showToast(`📍 '${pin.name}' 위치가 이동되어 클라우드에 동기화됩니다!`);
           });
 
           markersRef.current.push(marker);
         });
       }, [pins, selectedPin, exchangeRate]);
 
-      // ⚡ 최단 경로 자동 정렬 실행
       const handleOptimizeShortestRoute = () => {
         if (pins.length < 3) {
           showToast("⚠️ 3개 이상의 장소가 있을 때 최단 경로 정렬이 가능합니다.");
@@ -1016,14 +1218,16 @@
       const handleExportJSON = () => {
         const dataStr =
           "data:text/json;charset=utf-8," +
-          encodeURIComponent(JSON.stringify({ tripTitle, exchangeRate, pins }, null, 2));
+          encodeURIComponent(
+            JSON.stringify({ tripTitle, exchangeRate, peopleCount, pins, notes, checklist }, null, 2)
+          );
         const a = document.createElement("a");
         a.setAttribute("href", dataStr);
         a.setAttribute("download", `${tripTitle}_plan.json`);
         document.body.appendChild(a);
         a.click();
         a.remove();
-        showToast("💾 여행 계획이 JSON 파일로 백업되었습니다!");
+        showToast("💾 여행 계획과 메모장이 JSON 파일로 백업되었습니다!");
       };
 
       const handleImportJSON = (e) => {
@@ -1038,8 +1242,10 @@
               setPins(parsed.pins);
               if (parsed.tripTitle) setTripTitle(parsed.tripTitle);
               if (parsed.exchangeRate) setExchangeRate(parsed.exchangeRate);
+              if (parsed.notes) setNotes(parsed.notes);
+              if (parsed.checklist) setChecklist(parsed.checklist);
               if (parsed.pins[0]) setSelectedPinId(parsed.pins[0].id);
-              showToast("📂 여행 계획을 성공적으로 불러왔습니다!");
+              showToast("📂 여행 계획을 성공적으로 불러와 클라우드에 동기화합니다!");
             }
           } catch {
             showToast("⚠️ 올바른 JSON 파일이 아닙니다.");
@@ -1236,9 +1442,7 @@
         if (mapInstanceRef.current) {
           mapInstanceRef.current.flyTo([newPin.lat, newPin.lng], 16, { duration: 0.9 });
         }
-        showToast(
-          `📍 '${newPin.name}' 추가 완료! (구글맵 인당 평균 지출: ${computedSpend.label})`
-        );
+        showToast(`📍 '${newPin.name}' 추가 및 클라우드 동기화 완료!`);
       };
 
       const handleMovePinOrder = (index, direction) => {
@@ -1317,39 +1521,113 @@
         setNewItemAmount("");
       };
 
+      // 📝 대형 메모장 핸들러
+      const activeNoteObj = useMemo(
+        () => notes.find((n) => n.id === activeNoteId) || notes[0] || DEFAULT_NOTE_PAD[0],
+        [notes, activeNoteId]
+      );
+
+      const handleUpdateNoteContent = (val) => {
+        const nowStr = new Date().toLocaleString("ko-KR");
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === activeNoteObj.id ? { ...n, content: val, updatedAt: nowStr } : n
+          )
+        );
+      };
+
+      const handleUpdateNoteTitle = (val) => {
+        setNotes((prev) =>
+          prev.map((n) => (n.id === activeNoteObj.id ? { ...n, title: val } : n))
+        );
+      };
+
+      const handleAddNewNoteSheet = () => {
+        const newSheet = {
+          id: "note-" + Date.now(),
+          title: `📝 새 메모장 #${notes.length + 1}`,
+          content: "",
+          updatedAt: new Date().toLocaleString("ko-KR")
+        };
+        setNotes((prev) => [...prev, newSheet]);
+        setActiveNoteId(newSheet.id);
+        showToast("📝 새 메모 시트가 추가되었습니다!");
+      };
+
+      const handleAddChecklistItem = (e) => {
+        e.preventDefault();
+        if (!newCheckText.trim()) return;
+        setChecklist((prev) => [
+          ...prev,
+          { id: "chk-" + Date.now(), text: newCheckText.trim(), done: false }
+        ]);
+        setNewCheckText("");
+      };
+
       const openGoogleMapsTransit = (pinA, pinB) => {
         const url = `https://www.google.com/maps/dir/?api=1&origin=${pinA.lat},${pinA.lng}&destination=${pinB.lat},${pinB.lng}&travelmode=transit`;
         window.open(url, "_blank");
       };
 
       return (
-        <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 pb-16 lg:pb-0">
+        <div
+          className={`min-h-screen flex flex-col pb-16 lg:pb-0 ${
+            theme === "light"
+              ? "theme-light bg-slate-100 text-slate-900"
+              : "bg-slate-950 text-slate-100"
+          }`}
+        >
           {toastMsg && (
-            <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[9999] bg-indigo-600 text-white px-4 py-2.5 rounded-2xl shadow-2xl border border-indigo-400/50 font-bold text-xs sm:text-sm max-w-[92vw] text-center">
+            <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[9999] bg-indigo-600 keep-white px-4 py-2.5 rounded-2xl shadow-2xl border border-indigo-400/50 font-bold text-xs sm:text-sm max-w-[92vw] text-center">
               {toastMsg}
             </div>
           )}
 
           {/* 상단 헤더 */}
-          <header className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 px-3 sm:px-6 py-2.5">
+          <header className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 px-3 sm:px-6 py-2.5 shadow-sm">
             <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg font-black text-base">
+                <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg font-black text-base keep-white">
                   ✈️
                 </div>
                 <div>
-                  <input
-                    type="text"
-                    value={tripTitle}
-                    onChange={(e) => setTripTitle(e.target.value)}
-                    className="bg-slate-800/70 hover:bg-slate-800 border border-slate-700 font-extrabold text-sm sm:text-base text-white focus:outline-none focus:border-indigo-500 rounded-xl px-2.5 py-1 w-36 sm:w-52"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={tripTitle}
+                      onChange={(e) => setTripTitle(e.target.value)}
+                      className="bg-slate-800/70 hover:bg-slate-800 border border-slate-700 font-extrabold text-sm sm:text-base text-white focus:outline-none focus:border-indigo-500 rounded-xl px-2.5 py-1 w-36 sm:w-48"
+                    />
+                    {/* ☁️ 실시간 동기화 상태 표시 배지 */}
+                    <button
+                      onClick={() => fetchCloudData(true)}
+                      title="클릭하여 즉시 동기화"
+                      className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold border flex items-center gap-1 transition ${
+                        syncStatus === "synced"
+                          ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                          : syncStatus === "saving" || syncStatus === "connecting"
+                          ? "bg-amber-500/15 border-amber-500/40 text-amber-300 animate-pulse"
+                          : "bg-slate-800 border-slate-700 text-slate-400"
+                      }`}
+                    >
+                      {syncStatus === "synced" && (
+                        <>
+                          <span>☁️ 동기화됨</span>
+                          {lastSyncedTime && <span className="hidden sm:inline">({lastSyncedTime})</span>}
+                        </>
+                      )}
+                      {syncStatus === "saving" && <span>☁️ 저장중...</span>}
+                      {syncStatus === "connecting" && <span>🔄 연결중...</span>}
+                      {syncStatus === "offline" && <span>🔄 동기화 재시도</span>}
+                    </button>
+                  </div>
                   <p className="hidden sm:block text-[11px] text-slate-400 mt-0.5">
-                    🔒내 코스 영구보존 · ⚡최단동선 정렬 · 🚶도보/🚇대중교통 동시계산 · 📊구글맵 평균지출 안내
+                    ☁️맥북·내폰·여자친구폰 실시간 공유 · ☀️밝은/어두운 화면 · 📝대형 자유 메모장
                   </p>
                 </div>
               </div>
 
+              {/* 상단 핵심 요약 */}
               <div className="flex items-center gap-2.5 sm:gap-4 bg-slate-800/90 border border-slate-700 px-3 py-1.5 rounded-2xl text-[11px] sm:text-xs">
                 <div>
                   <span className="text-[10px] text-slate-400 block">완료 코스</span>
@@ -1373,25 +1651,48 @@
                 </div>
               </div>
 
+              {/* 상단 기능 & 탭 전환 버튼 */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 <div className="hidden lg:flex bg-slate-800 p-1 rounded-xl items-center border border-slate-700">
                   <button
                     onClick={() => setActiveTab("itinerary")}
                     className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition ${
-                      activeTab === "itinerary" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"
+                      activeTab === "itinerary"
+                        ? "bg-indigo-600 keep-white"
+                        : "text-slate-400 hover:text-white"
                     }`}
                   >
                     🗺️ 지도 & 코스
                   </button>
                   <button
+                    onClick={() => setActiveTab("notepad")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition ${
+                      activeTab === "notepad"
+                        ? "bg-amber-500 text-slate-950"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    📝 대형 메모장
+                  </button>
+                  <button
                     onClick={() => setActiveTab("budget")}
                     className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition ${
-                      activeTab === "budget" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-white"
+                      activeTab === "budget"
+                        ? "bg-emerald-600 keep-white"
+                        : "text-slate-400 hover:text-white"
                     }`}
                   >
                     💰 예산 · 정산
                   </button>
                 </div>
+
+                {/* ☀️ 밝은 화면 / 🌙 어두운 화면 전환 버튼 */}
+                <button
+                  onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-extrabold text-white shadow-sm transition"
+                >
+                  {theme === "light" ? "🌙 어두운 화면" : "☀️ 밝은 화면"}
+                </button>
 
                 <button
                   onClick={handleOptimizeShortestRoute}
@@ -1402,7 +1703,7 @@
 
                 <button
                   onClick={() => setShowAddModal(true)}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold shadow-lg"
+                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-xs font-extrabold shadow-lg"
                 >
                   ＋ 장소 추가
                 </button>
@@ -1410,37 +1711,29 @@
                 <button
                   onClick={handlePlayFullJourney}
                   disabled={isJourneyPlaying || pins.length < 2}
-                  className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 text-white text-xs font-extrabold disabled:opacity-40"
+                  className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 keep-white text-xs font-extrabold disabled:opacity-40"
                 >
                   🎬 주행
                 </button>
 
                 <button
-                  onClick={handleExportJSON}
-                  className="hidden sm:inline-block px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-indigo-300"
-                >
-                  💾 백업
-                </button>
-
-                <label className="hidden sm:inline-block px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-emerald-300 cursor-pointer">
-                  📂 복원
-                  <input type="file" accept=".json" onChange={handleImportJSON} className="hidden" />
-                </label>
-
-                <button
                   onClick={() => setShowResetModal(true)}
-                  className="px-2.5 py-1.5 rounded-xl bg-rose-600/20 border border-rose-500/40 text-rose-300 text-xs font-extrabold"
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-extrabold"
                 >
-                  ⚙️ 데이터관리
+                  ⚙️
                 </button>
               </div>
             </div>
           </header>
 
-          {/* 메인 영역 */}
+          {/* =================================================================
+              메인 영역 1: 지도 & 코스
+             ================================================================= */}
           <main
             className={`flex-1 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 p-2.5 sm:p-4 ${
-              activeTab === "itinerary" && mobileView !== "budget" ? "block" : "hidden"
+              activeTab === "itinerary" && mobileView !== "budget" && mobileView !== "notepad"
+                ? "block"
+                : "hidden"
             }`}
           >
             {/* 1. 지도 패널 */}
@@ -1458,7 +1751,7 @@
               <div className="absolute top-2.5 left-2.5 right-2.5 z-20 flex items-center justify-between gap-1.5 pointer-events-none">
                 <button
                   onClick={handleFindMyLocation}
-                  className="bg-blue-600 hover:bg-blue-500 text-white border border-blue-400 px-2.5 py-1.5 rounded-xl shadow-xl pointer-events-auto text-[11px] font-black flex items-center gap-1"
+                  className="bg-blue-600 hover:bg-blue-500 keep-white border border-blue-400 px-2.5 py-1.5 rounded-xl shadow-xl pointer-events-auto text-[11px] font-black flex items-center gap-1"
                 >
                   🛰️ 내 위치(GPS)
                 </button>
@@ -1486,7 +1779,7 @@
                   {animatingInfo ? (
                     <>
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-[11px] font-extrabold text-pink-300">
+                        <span className="text-[11px] font-extrabold text-pink-500">
                           🚌 이동 중... ({animatingInfo.progress}%)
                         </span>
                         <span className="text-xs font-black text-amber-300">
@@ -1501,7 +1794,7 @@
                     lastCompletedSegment && (
                       <div className="flex items-center justify-between gap-2">
                         <div>
-                          <div className="text-[11px] font-bold text-emerald-300">
+                          <div className="text-[11px] font-bold text-emerald-400">
                             ✅ 이동 완료 구간 (대중교통 & 도보 소요시간 고정 표시)
                           </div>
                           <div className="text-xs sm:text-sm font-black text-amber-300 mt-0.5">
@@ -1540,7 +1833,7 @@
                     📍 나의 여행 코스 <span className="text-indigo-400">({pins.length}곳)</span>
                   </h2>
                   <p className="text-[11px] text-slate-400">
-                    이제 코드 업데이트 시에도 내 코스가 절대 초기화되지 않습니다
+                    수정 즉시 여자친구 폰·맥북에 실시간 동기화됩니다
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -1552,7 +1845,7 @@
                   </button>
                   <button
                     onClick={() => setShowAddModal(true)}
-                    className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs"
+                    className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs"
                   >
                     ＋ 추가
                   </button>
@@ -1564,23 +1857,23 @@
                   <div className="text-center py-10 px-4 space-y-3">
                     <div className="text-3xl">🗺️</div>
                     <div className="text-sm font-extrabold text-white">
-                      현재 등록된 여행 코스가 없습니다.
+                      등록된 여행 코스가 없습니다.
                     </div>
                     <p className="text-xs text-slate-400">
-                      글리코상·도톤보리 같은 기본 샘플이 자동으로 생기지 않도록 깔끔하게 비워두었습니다!
+                      장소를 추가하면 맥북과 스마트폰 모두에 실시간으로 똑같이 공유됩니다!
                     </p>
                     <div className="flex flex-wrap justify-center gap-2 pt-2">
                       <button
                         onClick={() => setShowAddModal(true)}
-                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-extrabold text-white shadow"
+                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-extrabold keep-white shadow"
                       >
                         ＋ 첫 여행 장소 검색/추가하기
                       </button>
                       <button
                         onClick={handleRecoverPreviousStorageData}
-                        className="px-3.5 py-2 rounded-xl bg-emerald-600/20 border border-emerald-500/40 text-xs font-extrabold text-emerald-300"
+                        className="px-3.5 py-2 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-xs font-extrabold text-emerald-400"
                       >
-                        🔄 이전 버전에서 입력했던 내 코스 복구하기
+                        🔄 이 기기의 이전 코스 불러오기
                       </button>
                     </div>
                   </div>
@@ -1624,8 +1917,8 @@
                                   pin.completed
                                     ? "bg-emerald-500 text-slate-950"
                                     : isSelected
-                                    ? "bg-pink-500 text-white"
-                                    : "bg-slate-700 text-slate-200"
+                                    ? "bg-pink-500 keep-white"
+                                    : "bg-indigo-600 keep-white"
                                 }`}
                               >
                                 {pin.completed ? "✓" : index + 1}
@@ -1660,7 +1953,7 @@
                                   setSelectedPinId(pin.id);
                                   setMobileView("detail");
                                 }}
-                                className="lg:hidden px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-300 text-[11px] font-bold"
+                                className="lg:hidden px-2 py-0.5 rounded bg-indigo-600/20 text-indigo-400 text-[11px] font-bold"
                               >
                                 상세
                               </button>
@@ -1668,7 +1961,7 @@
                                 onClick={() =>
                                   setPins((prev) => prev.filter((p) => p.id !== pin.id))
                                 }
-                                className="p-1 text-slate-500 hover:text-rose-400 text-xs"
+                                className="p-1 text-slate-400 hover:text-rose-500 text-xs"
                               >
                                 ✕
                               </button>
@@ -1734,10 +2027,10 @@
                                 <span className="text-slate-400">({transitToNext.distanceKm}km)</span>
                               </div>
                               <div className="flex flex-wrap items-center gap-1.5 text-xs font-extrabold">
-                                <span className="bg-indigo-500/25 border border-indigo-400/40 text-amber-300 px-2 py-0.5 rounded-lg">
+                                <span className="bg-indigo-500/20 border border-indigo-400/40 text-amber-300 px-2 py-0.5 rounded-lg">
                                   🚇 대중교통: 약 {transitToNext.transitFormatted}
                                 </span>
-                                <span className="bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 px-2 py-0.5 rounded-lg">
+                                <span className="bg-emerald-500/20 border border-emerald-400/40 text-emerald-400 px-2 py-0.5 rounded-lg">
                                   🚶 도보: 약 {transitToNext.walkFormatted}
                                 </span>
                               </div>
@@ -1745,7 +2038,7 @@
                             <div className="flex flex-col sm:flex-row items-center gap-1 shrink-0 ml-2">
                               <button
                                 onClick={() => animateBetweenPins(pin, nextPin)}
-                                className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-extrabold"
+                                className="px-2 py-1 rounded-lg bg-indigo-600 keep-white text-[11px] font-extrabold"
                               >
                                 ▶ 이동
                               </button>
@@ -1765,7 +2058,7 @@
               </div>
             </section>
 
-            {/* 3. 우측 패널: 선택 장소 상세 + 구글 맵 인당 평균 지출 안내 */}
+            {/* 3. 우측 패널: 선택 장소 상세 */}
             <section
               className={`lg:col-span-3 lg:order-3 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl ${
                 mobileView === "detail" ? "flex max-h-[78vh]" : "hidden lg:flex lg:max-h-[82vh]"
@@ -1816,7 +2109,7 @@
                                 setEditNameText(selectedPin.name);
                                 setEditCategoryText(selectedPin.category);
                               }}
-                              className="text-[11px] font-bold text-amber-300 bg-slate-800 px-2 py-1 rounded-lg"
+                              className="text-[11px] font-bold text-amber-300 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700"
                             >
                               ✏️ 이름 수정
                             </button>
@@ -1826,7 +2119,7 @@
                               )}`}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-[11px] font-bold text-indigo-300 hover:underline"
+                              className="text-[11px] font-bold text-indigo-400 hover:underline"
                             >
                               구글맵↗
                             </a>
@@ -1855,7 +2148,7 @@
                           <div className="text-slate-400 text-[11px]">
                             ➡️ 다음 <b>{nextTransitInfo.to.name}</b>까지:
                           </div>
-                          <div className="font-extrabold text-indigo-300 mt-0.5">
+                          <div className="font-extrabold text-indigo-400 mt-0.5">
                             🚇 대중교통 {nextTransitInfo.info.transitFormatted} · 🚶 도보 {nextTransitInfo.info.walkFormatted}
                           </div>
                         </div>
@@ -1867,7 +2160,7 @@
                     {selectedPinAvgSpend && (
                       <div className="p-3.5 rounded-2xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-indigo-950/60 border border-emerald-500/40 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-extrabold text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-full">
+                          <span className="text-[11px] font-extrabold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full">
                             📊 구글 맵 방문객 지출 이력 안내
                           </span>
                           <span className="text-xs font-black text-amber-300">
@@ -1886,7 +2179,7 @@
                           </button>
                           <button
                             onClick={() => handleApplyGoogleAvgSpend(selectedPin, peopleCount)}
-                            className="flex-1 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs transition"
+                            className="flex-1 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs transition"
                           >
                             ＋ {peopleCount}인({formatJPY(selectedPinAvgSpend.avgYen * peopleCount)}) 담기
                           </button>
@@ -1896,7 +2189,7 @@
 
                     <div>
                       <label className="block text-xs font-extrabold text-slate-300 mb-1.5">
-                        📝 장소 메모 및 꿀팁
+                        📝 이 장소의 메모 및 꿀팁
                       </label>
                       <textarea
                         rows={2}
@@ -1944,11 +2237,11 @@
                             placeholder={inputCurrency === "JPY" ? "1500 (엔)" : "15000 (원)"}
                             value={newItemAmount}
                             onChange={(e) => setNewItemAmount(e.target.value)}
-                            className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-emerald-300 font-bold"
+                            className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-emerald-400 font-bold"
                           />
                           <button
                             type="submit"
-                            className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white font-extrabold text-xs"
+                            className="px-3.5 py-2 rounded-xl bg-indigo-600 keep-white font-extrabold text-xs"
                           >
                             ＋ 추가
                           </button>
@@ -1987,7 +2280,7 @@
                               />
                               <span
                                 className={`text-xs font-bold ${
-                                  item.bought ? "line-through text-slate-500" : "text-slate-200"
+                                  item.bought ? "line-through text-slate-400" : "text-slate-200"
                                 }`}
                               >
                                 {item.title}
@@ -2015,7 +2308,7 @@
                                     )
                                   )
                                 }
-                                className="text-slate-500 hover:text-rose-400 text-xs px-1"
+                                className="text-slate-400 hover:text-rose-500 text-xs px-1"
                               >
                                 ✕
                               </button>
@@ -2043,7 +2336,160 @@
             </section>
           </main>
 
-          {/* 예산 · 정산 탭 */}
+          {/* =================================================================
+              📝 메인 영역 2: 큼직한 전용 '대형 자유 메모장 & 체크리스트' 탭
+             ================================================================= */}
+          {(activeTab === "notepad" || mobileView === "notepad") && (
+            <main className="flex-1 max-w-[1400px] w-full mx-auto p-3 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* 좌측/상단: 대형 자유 메모장 (전체 8칸 차지) */}
+              <section className="lg:col-span-8 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-xl min-h-[65vh]">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                  <div>
+                    <h2 className="text-base sm:text-xl font-black text-white flex items-center gap-2">
+                      <span>📝 대형 자유 메모장</span>
+                      <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-2.5 py-0.5 rounded-full">
+                        ☁️ 실시간 공유됨
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      두루뭉실한 여행 계획, 가고 싶은 곳 후보, 비행기/숙소 정보 등을 자유롭게 넓게 적어두세요!
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleAddNewNoteSheet}
+                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-xs font-extrabold shadow"
+                  >
+                    ＋ 새 메모장 시트 추가
+                  </button>
+                </div>
+
+                {/* 메모 시트 탭 목록 */}
+                <div className="flex items-center gap-2 overflow-x-auto py-3">
+                  {notes.map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() => setActiveNoteId(n.id)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-extrabold shrink-0 border transition ${
+                        activeNoteObj.id === n.id
+                          ? "bg-indigo-600 keep-white border-indigo-500 shadow"
+                          : "bg-slate-800 text-slate-300 border-slate-700 hover:border-indigo-400"
+                      }`}
+                    >
+                      {n.title}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 선택된 메모장 제목 & 초대형 텍스트 입력창 */}
+                <div className="flex-1 flex flex-col space-y-3 mt-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <input
+                      type="text"
+                      value={activeNoteObj.title}
+                      onChange={(e) => handleUpdateNoteTitle(e.target.value)}
+                      placeholder="메모장 제목을 입력하세요"
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-sm sm:text-base font-extrabold text-white focus:outline-none focus:border-indigo-500"
+                    />
+                    {notes.length > 1 && (
+                      <button
+                        onClick={() => {
+                          const filtered = notes.filter((n) => n.id !== activeNoteObj.id);
+                          setNotes(filtered);
+                          setActiveNoteId(filtered[0]?.id || "");
+                        }}
+                        className="px-3 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-bold"
+                      >
+                        시트 삭제
+                      </button>
+                    )}
+                  </div>
+
+                  <textarea
+                    value={activeNoteObj.content}
+                    onChange={(e) => handleUpdateNoteContent(e.target.value)}
+                    placeholder={`여기에 자유롭게 적으세요!\n\n예시:\n- 1일차 저녁엔 도톤보리 근처 야키니쿠 먹기\n- 여자친구가 가고 싶어 했던 카페 모리츠 분위기 나는 조용한 루프탑 카페 찾기\n- 돈키호테에서 살 것: 동전파스, 샤론파스, 휴족시간\n- 숙소 체크인 15:00 / 체크아웃 11:00`}
+                    className="flex-1 w-full min-h-[380px] sm:min-h-[480px] bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-5 text-sm sm:text-base leading-relaxed text-white focus:outline-none focus:border-indigo-500 resize-y"
+                  />
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span>마지막 작성: {activeNoteObj.updatedAt}</span>
+                    <span>글자 수: {(activeNoteObj.content || "").length}자 · 자동 클라우드 저장</span>
+                  </div>
+                </div>
+              </section>
+
+              {/* 우측/하단: 준비물 & 할 일 체크리스트 (4칸 차지) */}
+              <section className="lg:col-span-4 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-xl">
+                <h3 className="text-base sm:text-lg font-black text-white">
+                  ✅ 여행 준비물 & 할 일 체크리스트
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5 mb-3">
+                  함께 챙겨야 할 준비물이나 예약 할 일을 체크하세요.
+                </p>
+
+                <form onSubmit={handleAddChecklistItem} className="flex gap-2 mb-4">
+                  <input
+                    type="text"
+                    value={newCheckText}
+                    onChange={(e) => setNewCheckText(e.target.value)}
+                    placeholder="준비물이나 할 일 추가 (예: 유심/eSIM 구매)"
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shrink-0"
+                  >
+                    ＋ 추가
+                  </button>
+                </form>
+
+                <div className="flex-1 overflow-y-auto space-y-2">
+                  {checklist.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`flex items-center justify-between p-3 rounded-2xl border ${
+                        item.done
+                          ? "bg-emerald-950/20 border-emerald-500/40"
+                          : "bg-slate-950 border-slate-800"
+                      }`}
+                    >
+                      <label className="flex items-center gap-2.5 cursor-pointer flex-1">
+                        <input
+                          type="checkbox"
+                          checked={item.done}
+                          onChange={() =>
+                            setChecklist((prev) =>
+                              prev.map((c) => (c.id === item.id ? { ...c, done: !c.done } : c))
+                            )
+                          }
+                          className="w-4 h-4 rounded accent-emerald-500"
+                        />
+                        <span
+                          className={`text-xs sm:text-sm font-bold ${
+                            item.done ? "line-through text-slate-400" : "text-white"
+                          }`}
+                        >
+                          {item.text}
+                        </span>
+                      </label>
+                      <button
+                        onClick={() =>
+                          setChecklist((prev) => prev.filter((c) => c.id !== item.id))
+                        }
+                        className="text-slate-400 hover:text-rose-500 text-xs px-1.5"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </main>
+          )}
+
+          {/* =================================================================
+              💰 메인 영역 3: 예산 · 정산 탭
+             ================================================================= */}
           {(activeTab === "budget" || mobileView === "budget") && (
             <main className="flex-1 max-w-[1300px] w-full mx-auto p-3 sm:p-6 space-y-5">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
@@ -2094,20 +2540,20 @@
                   </p>
                 </div>
 
-                <div className="bg-gradient-to-br from-indigo-900/60 to-purple-900/60 border border-indigo-500/40 p-4 sm:p-5 rounded-3xl">
+                <div className="bg-slate-900 border border-indigo-500/40 p-4 sm:p-5 rounded-3xl">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-indigo-300">1인당 정산 (1/N)</span>
-                    <div className="flex items-center gap-1.5 bg-slate-950/60 px-2 py-0.5 rounded-lg">
+                    <span className="text-xs font-bold text-indigo-400">1인당 정산 (1/N)</span>
+                    <div className="flex items-center gap-1.5 bg-slate-950/60 px-2 py-0.5 rounded-lg border border-slate-800">
                       <button
                         onClick={() => setPeopleCount((c) => Math.max(1, c - 1))}
-                        className="text-xs font-black text-indigo-300 px-1"
+                        className="text-xs font-black text-indigo-400 px-1"
                       >
                         -
                       </button>
                       <span className="text-xs font-extrabold text-white">{peopleCount}명</span>
                       <button
                         onClick={() => setPeopleCount((c) => c + 1)}
-                        className="text-xs font-black text-indigo-300 px-1"
+                        className="text-xs font-black text-indigo-400 px-1"
                       >
                         +
                       </button>
@@ -2116,7 +2562,7 @@
                   <div className="text-lg sm:text-2xl font-black text-white mt-1">
                     {formatKRW(budgetStats.perPersonKRW)}
                   </div>
-                  <div className="text-xs font-bold text-indigo-200 mt-0.5">
+                  <div className="text-xs font-bold text-indigo-400 mt-0.5">
                     약 {formatJPY(budgetStats.perPersonJPY)}
                   </div>
                 </div>
@@ -2164,14 +2610,14 @@
             </main>
           )}
 
-          {/* 모바일 하단 네비게이션 */}
-          <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 grid grid-cols-4 px-2 py-1.5">
+          {/* 모바일 하단 네비게이션 (5개 탭: 지도+코스 / 코스목록 / 장소상세 / 대형메모장 / 예산정산) */}
+          <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 grid grid-cols-5 px-1.5 py-1.5">
             <button
               onClick={() => {
                 setActiveTab("itinerary");
                 setMobileView("split");
               }}
-              className={`flex flex-col items-center py-1 rounded-xl text-[11px] font-extrabold ${
+              className={`flex flex-col items-center py-1 rounded-xl text-[10px] font-extrabold ${
                 mobileView === "split" ? "text-indigo-400 bg-indigo-500/15" : "text-slate-400"
               }`}
             >
@@ -2183,30 +2629,43 @@
                 setActiveTab("itinerary");
                 setMobileView("list");
               }}
-              className={`flex flex-col items-center py-1 rounded-xl text-[11px] font-extrabold ${
+              className={`flex flex-col items-center py-1 rounded-xl text-[10px] font-extrabold ${
                 mobileView === "list" ? "text-indigo-400 bg-indigo-500/15" : "text-slate-400"
               }`}
             >
               <span>📋</span>
-              <span>코스목록({pins.length})</span>
+              <span>코스({pins.length})</span>
             </button>
             <button
               onClick={() => {
                 setActiveTab("itinerary");
                 setMobileView("detail");
               }}
-              className={`flex flex-col items-center py-1 rounded-xl text-[11px] font-extrabold ${
+              className={`flex flex-col items-center py-1 rounded-xl text-[10px] font-extrabold ${
                 mobileView === "detail" ? "text-indigo-400 bg-indigo-500/15" : "text-slate-400"
               }`}
             >
               <span>📊</span>
-              <span>평균금액·메모</span>
+              <span>상세·평균값</span>
             </button>
             <button
               onClick={() => {
+                setActiveTab("notepad");
+                setMobileView("notepad");
+              }}
+              className={`flex flex-col items-center py-1 rounded-xl text-[10px] font-extrabold ${
+                mobileView === "notepad" ? "text-amber-400 bg-amber-500/15" : "text-slate-400"
+              }`}
+            >
+              <span>📝</span>
+              <span>대형메모장</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab("budget");
                 setMobileView("budget");
               }}
-              className={`flex flex-col items-center py-1 rounded-xl text-[11px] font-extrabold ${
+              className={`flex flex-col items-center py-1 rounded-xl text-[10px] font-extrabold ${
                 mobileView === "budget" ? "text-emerald-400 bg-emerald-500/15" : "text-slate-400"
               }`}
             >
@@ -2256,7 +2715,7 @@
                       <button
                         type="submit"
                         disabled={isSearching}
-                        className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shrink-0"
+                        className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shrink-0"
                       >
                         {isSearching ? "검색중..." : "🔍 검색"}
                       </button>
@@ -2264,7 +2723,7 @@
                   </div>
 
                   {translatedInfo && (
-                    <div className="text-[11px] text-indigo-300 bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-500/30">
+                    <div className="text-[11px] text-indigo-400 bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-500/30">
                       🌐 자동 다국어 변환 검색됨: <b>{translatedInfo.original}</b> → 일문:{" "}
                       <b>{translatedInfo.ja}</b> / 영문: <b>{translatedInfo.en}</b>
                     </div>
@@ -2315,7 +2774,7 @@
 
                 <div>
                   <div className="text-xs font-bold text-slate-400 mb-1.5">
-                    🇯🇵 자주 찾는 장소 빠른 추가 (원할 때만 클릭해서 추가하세요)
+                    🇯🇵 자주 찾는 장소 빠른 추가
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
                     {PRESET_PLACES.map((p, i) => {
@@ -2342,12 +2801,12 @@
             </div>
           )}
 
-          {/* 데이터 복구 & 정리 모달 */}
+          {/* 데이터 관리 & 동기화 모달 */}
           {showResetModal && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-base text-white">⚙️ 내 코스 복구 및 데이터 관리</h3>
+                  <h3 className="font-extrabold text-base text-white">⚙️ 클라우드 동기화 및 데이터 관리</h3>
                   <button
                     onClick={() => setShowResetModal(false)}
                     className="text-slate-400 hover:text-white text-sm font-bold"
@@ -2357,28 +2816,44 @@
                 </div>
 
                 <button
-                  onClick={handleRecoverPreviousStorageData}
-                  className="w-full p-3.5 rounded-2xl bg-emerald-600/25 hover:bg-emerald-600/35 border border-emerald-500/50 text-left"
+                  onClick={() => {
+                    fetchCloudData(true);
+                    setShowResetModal(false);
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 text-left"
                 >
-                  <div className="text-xs font-extrabold text-emerald-300">
-                    🔄 이전 버전에서 입력했던 내 장소들 모두 찾아 복구하기
+                  <div className="text-xs font-extrabold text-indigo-400">
+                    ☁️ 지금 즉시 클라우드 최신 데이터 불러오기
                   </div>
-                  <p className="text-[11px] text-slate-300 mt-0.5">
-                    업데이트 전 브라우저에 저장되어 있던 내 코스들을 스캔하여 되살립니다.
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    여자친구 폰이나 맥북에서 방금 수정한 내용을 즉시 가져옵니다.
                   </p>
                 </button>
 
                 <button
-                  onClick={handleRemoveSamplePinsOnly}
-                  className="w-full p-3.5 rounded-2xl bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-left"
+                  onClick={handleRecoverPreviousStorageData}
+                  className="w-full p-3.5 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-left"
                 >
-                  <div className="text-xs font-extrabold text-amber-300">
-                    🧹 기본 샘플(글리코상·도톤보리·이치란)만 싹 지우기
+                  <div className="text-xs font-extrabold text-emerald-400">
+                    🔄 이 기기의 이전 버전 코스 찾아 합치기
                   </div>
-                  <p className="text-[11px] text-slate-300 mt-0.5">
-                    내가 추가한 장소는 그대로 두고, 기본 샘플 핀만 골라서 삭제합니다.
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    현재 브라우저에 남아 있던 예전 코스들을 찾아 클라우드에 합칩니다.
                   </p>
                 </button>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleExportJSON}
+                    className="flex-1 p-3 rounded-2xl bg-slate-800 border border-slate-700 text-xs font-extrabold text-white"
+                  >
+                    💾 파일로 백업
+                  </button>
+                  <label className="flex-1 p-3 rounded-2xl bg-slate-800 border border-slate-700 text-xs font-extrabold text-white text-center cursor-pointer">
+                    📂 파일 불러오기
+                    <input type="file" accept=".json" onChange={handleImportJSON} className="hidden" />
+                  </label>
+                </div>
 
                 <button
                   onClick={() => {
@@ -2387,7 +2862,7 @@
                     setShowResetModal(false);
                     showToast("🔄 방문 완료(OK) 체크만 초기화되었습니다.");
                   }}
-                  className="w-full p-3.5 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 text-left text-xs font-extrabold text-indigo-300"
+                  className="w-full p-3 rounded-2xl bg-slate-800 border border-slate-700 text-left text-xs font-extrabold text-slate-300"
                 >
                   ☑️ 방문 완료(OK) 체크 상태만 초기화
                 </button>
@@ -2398,11 +2873,11 @@
                     setSelectedPinId(null);
                     setLastCompletedSegment(null);
                     setShowResetModal(false);
-                    showToast("🗑️ 모든 핀이 삭제되어 빈 지도로 시작합니다.");
+                    showToast("🗑️ 모든 핀이 비워졌습니다.");
                   }}
-                  className="w-full p-3.5 rounded-2xl bg-rose-600/20 border border-rose-500/40 text-left text-xs font-extrabold text-rose-300"
+                  className="w-full p-3 rounded-2xl bg-rose-600/20 border border-rose-500/40 text-left text-xs font-extrabold text-rose-400"
                 >
-                  🗑️ 모든 핀 비우기 (빈 화면으로 시작)
+                  🗑️ 모든 핀 비우기
                 </button>
               </div>
             </div>
