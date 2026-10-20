@@ -69,26 +69,35 @@
       filter: brightness(1.07);
     }
 
-    /* ☀️ 라이트 모드 (밝은 화면) 글로벌 오버라이드 스타일 */
+    /* ☀️ 라이트 모드 (밝은 화면) 글로벌 오버라이드 스타일 — 어두운 회색 박스 완전 제거 */
     .theme-light {
       background-color: #f1f5f9 !important;
       color: #0f172a !important;
     }
-    .theme-light .bg-slate-950 { background-color: #f1f5f9 !important; }
-    .theme-light .bg-slate-950\/90,
-    .theme-light .bg-slate-950\/85,
-    .theme-light .bg-slate-950\/80,
-    .theme-light .bg-slate-950\/60 { background-color: rgba(241, 245, 249, 0.96) !important; }
-    .theme-light .bg-slate-900,
-    .theme-light .bg-slate-900\/95,
-    .theme-light .bg-slate-900\/90 { background-color: #ffffff !important; }
-    .theme-light .bg-slate-800,
-    .theme-light .bg-slate-800\/90,
-    .theme-light .bg-slate-800\/70,
-    .theme-light .bg-slate-800\/50 { background-color: #f8fafc !important; }
-    .theme-light .border-slate-800,
-    .theme-light .border-slate-700,
-    .theme-light .border-slate-700\/70 { border-color: #e2e8f0 !important; }
+    .theme-light [class*="bg-slate-950"] {
+      background-color: #f8fafc !important;
+    }
+    .theme-light [class*="bg-slate-900"] {
+      background-color: #ffffff !important;
+    }
+    .theme-light [class*="bg-slate-800"] {
+      background-color: #f1f5f9 !important;
+    }
+    .theme-light input[class*="bg-slate-"],
+    .theme-light textarea[class*="bg-slate-"],
+    .theme-light select[class*="bg-slate-"] {
+      background-color: #ffffff !important;
+      color: #0f172a !important;
+      border-color: #cbd5e1 !important;
+    }
+    .theme-light input::placeholder,
+    .theme-light textarea::placeholder {
+      color: #94a3b8 !important;
+    }
+    .theme-light [class*="border-slate-800"],
+    .theme-light [class*="border-slate-700"] {
+      border-color: #e2e8f0 !important;
+    }
     .theme-light .text-white,
     .theme-light .text-slate-100,
     .theme-light .text-slate-200 { color: #0f172a !important; }
@@ -99,9 +108,9 @@
     .theme-light .text-emerald-300 { color: #059669 !important; }
     .theme-light .text-indigo-400,
     .theme-light .text-indigo-300 { color: #4f46e5 !important; }
-    .theme-light .bg-indigo-950\/60,
-    .theme-light .bg-indigo-950\/35,
-    .theme-light .bg-indigo-950\/40 { background-color: #eef2ff !important; }
+    .theme-light [class*="bg-indigo-950"] {
+      background-color: #eef2ff !important;
+    }
 
     /* 버튼 내부 흰색 글씨는 라이트 모드에서도 그대로 유지 */
     .theme-light .keep-white { color: #ffffff !important; }
@@ -712,12 +721,13 @@
 
       // 탭 상태: itinerary(지도&코스) | notepad(대형 메모장) | budget(예산·정산)
       const [activeTab, setActiveTab] = useState("itinerary");
-      const [mobileView, setMobileView] = useState("split"); // split | list | detail | notepad | budget
+      const [mobileView, setMobileView] = useState("split"); // split | notepad | budget
 
       const [selectedPinId, setSelectedPinId] = useState(() => {
         const initial = loadSavedPinsWithMigration();
         return initial[0]?.id || null;
       });
+      const [expandedPinId, setExpandedPinId] = useState(null);
 
       const [showAddModal, setShowAddModal] = useState(false);
       const [searchKeyword, setSearchKeyword] = useState("");
@@ -1299,7 +1309,7 @@
             const isRelevantSegment =
               pinA.id === selectedPin?.id || pinB.id === selectedPin?.id || pins.length <= 3;
             segmentLine.bindTooltip(
-              `${i + 1}→${i + 2} 🚇${transit.transitFormatted}·🚶${transit.walkFormatted}`,
+              `🚶 도보 ${transit.walkFormatted}`,
               {
                 permanent: isRelevantSegment,
                 direction: "center",
@@ -1342,17 +1352,16 @@
           })
             .addTo(map)
             .bindPopup(
-              `<div style="min-width: 210px; line-height: 1.45;">
+              `<div style="min-width: 195px; line-height: 1.45;">
                 <div style="font-size:11px; color:#818cf8; font-weight:800;">코스 #${idx + 1} · ${pin.category}</div>
                 <div style="font-size:14px; font-weight:900; margin: 2px 0 4px; color:#fff;">${pin.name}</div>
                 <div style="font-size:11px; color:#34d399; font-weight:800; background:rgba(16,185,129,0.12); padding:4px 7px; border-radius:8px; margin-bottom:5px;">
-                  📊 구글맵 인당 평균: ${avgSpend.label} (약 ${formatKRW(avgSpend.avgYen * exchangeRate)})
+                  📊 인당 평균: ${avgSpend.label} (약 ${formatKRW(avgSpend.avgYen * exchangeRate)})
                 </div>
                 ${
                   nextTransit
                     ? `<div style="margin-top:5px; padding-top:5px; border-top:1px solid #334155; font-size:11px; color:#fde047; font-weight:700;">
-                        다음(${nextPin.name})까지:<br/>
-                        🚇 대중교통 약 ${nextTransit.transitFormatted} · 🚶 도보 약 ${nextTransit.walkFormatted}
+                        다음(${nextPin.name})까지: 🚶 도보 약 ${nextTransit.walkFormatted}
                       </div>`
                     : ""
                 }
@@ -1481,17 +1490,11 @@
         ]);
         map.flyToBounds(bounds.pad(0.45), { duration: 0.8 });
 
-        const vehicleEmoji = transit.mode.includes("도보")
-          ? "🏃"
-          : transit.mode.includes("신칸센")
-          ? "🚄"
-          : "🚇";
-
         const travelerIcon = L.divIcon({
-          html: `<div class="traveler-avatar">${vehicleEmoji}</div>`,
+          html: `<div class="traveler-avatar">🚶</div>`,
           className: "",
-          iconSize: [44, 44],
-          iconAnchor: [22, 22]
+          iconSize: [42, 42],
+          iconAnchor: [21, 21]
         });
 
         const travelerMarker = L.marker([fromPin.lat, fromPin.lng], {
@@ -1501,7 +1504,7 @@
         travelerMarkerRef.current = travelerMarker;
 
         const activeLine = L.polyline([[fromPin.lat, fromPin.lng]], {
-          color: "#ec4899",
+          color: "#0ea5e9",
           weight: 6,
           opacity: 0.95
         }).addTo(map);
@@ -1562,11 +1565,9 @@
         if (nextPin) {
           const tInfo = estimateTransitInfo(currentPin, nextPin);
           showToast(
-            `✅ '${currentPin.name}' 완료! 다음 '${nextPin.name}'까지 대중교통 ${tInfo.transitFormatted} / 도보 ${tInfo.walkFormatted}`
+            `✅ '${currentPin.name}' 완료! 다음 '${nextPin.name}'까지 도보 약 ${tInfo.walkFormatted}`
           );
-          if (mobileView === "list" || mobileView === "detail") {
-            setMobileView("split");
-          }
+          setMobileView("split");
           animateBetweenPins(currentPin, nextPin);
         } else {
           showToast(`🎉 모든 여행 코스를 완료했습니다!`);
@@ -2045,18 +2046,16 @@
       };
 
       const openGoogleMapsTransit = (pinA, pinB) => {
-        const url = `https://www.google.com/maps/dir/?api=1&origin=${pinA.lat},${pinA.lng}&destination=${pinB.lat},${pinB.lng}&travelmode=transit`;
+        const url = `https://www.google.com/maps/dir/?api=1&origin=${pinA.lat},${pinA.lng}&destination=${pinB.lat},${pinB.lng}&travelmode=walking`;
         window.open(url, "_blank");
       };
 
-      // 현재 활성 뷰 판별 (모바일/맥북 공통 4개 탭 체감)
+      // 현재 활성 뷰 판별 (중복 탭 제거 → 3개 핵심 탭: 지도+코스 / 메모장 / 예산·정산)
       const currentView =
         activeTab === "notepad" || mobileView === "notepad"
           ? "notepad"
           : activeTab === "budget" || mobileView === "budget"
           ? "budget"
-          : mobileView === "list"
-          ? "list"
           : "split";
 
       const switchAppView = (viewName) => {
@@ -2066,9 +2065,6 @@
         } else if (viewName === "budget") {
           setActiveTab("budget");
           setMobileView("budget");
-        } else if (viewName === "list") {
-          setActiveTab("itinerary");
-          setMobileView("list");
         } else {
           setActiveTab("itinerary");
           setMobileView("split");
@@ -2078,7 +2074,7 @@
       return (
         <div
           spellCheck={false}
-          className={`min-h-screen flex flex-col pb-20 lg:pb-8 ${
+          className={`min-h-screen flex flex-col pb-24 lg:pb-10 ${
             theme === "light"
               ? "theme-light bg-slate-100 text-slate-900"
               : "bg-slate-950 text-slate-100"
@@ -2139,7 +2135,7 @@
           )}
 
           {/* =================================================================
-              📱 상단 네이티브 앱 헤더 (모바일에서 답답하지 않은 2단 컴팩트 구조 + 맥북 대화면 앱 뷰)
+              📱 상단 네이티브 앱 헤더 (여백이 넉넉하고 잘림 없는 클린 2단 구조)
              ================================================================= */}
           <header className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 px-3 sm:px-5 py-2.5 shadow-sm">
             <div className="max-w-[1160px] mx-auto space-y-2">
@@ -2160,13 +2156,13 @@
                     autoComplete="off"
                     value={tripTitle}
                     onChange={(e) => setTripTitle(e.target.value)}
-                    className="bg-slate-800/80 hover:bg-slate-800 border border-slate-700 font-extrabold text-sm sm:text-base text-white focus:outline-none focus:border-pink-400 rounded-xl px-2.5 py-1.5 min-w-0 w-36 sm:w-56 transition"
+                    className="bg-slate-800 border border-slate-700 font-extrabold text-sm sm:text-base text-white focus:outline-none focus:border-pink-400 rounded-xl px-2.5 py-1.5 min-w-0 flex-1 max-w-[165px] sm:max-w-[240px] transition"
                   />
                   {/* ☁️ 실시간 동기화 상태 배지 */}
                   <button
                     onClick={() => fetchCloudData(true)}
                     title="클릭하여 즉시 동기화"
-                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold border flex items-center gap-1 shrink-0 transition ${
+                    className={`px-2 py-1.5 rounded-xl text-[11px] font-extrabold border flex items-center gap-1 shrink-0 transition ${
                       syncStatus === "synced"
                         ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
                         : syncStatus === "saving" || syncStatus === "connecting"
@@ -2177,12 +2173,7 @@
                     {syncStatus === "synced" && (
                       <>
                         <span>☁️</span>
-                        <span className="hidden xs:inline sm:inline">동기화됨</span>
-                        {lastSyncedTime && (
-                          <span className="hidden md:inline text-[10px] opacity-80">
-                            ({lastSyncedTime})
-                          </span>
-                        )}
+                        <span className="hidden sm:inline">동기화됨</span>
                       </>
                     )}
                     {syncStatus === "saving" && <span>☁️ 저장중</span>}
@@ -2207,7 +2198,7 @@
                   <button
                     onClick={handlePlayFullJourney}
                     disabled={isJourneyPlaying || pins.length < 2}
-                    className="px-3 py-1.5 rounded-xl timeline-btn keep-white text-xs font-extrabold disabled:opacity-40 transition flex items-center gap-1"
+                    className="px-2.5 sm:px-3 py-1.5 rounded-xl timeline-btn keep-white text-xs font-extrabold disabled:opacity-40 transition flex items-center gap-1"
                   >
                     <span>🕒</span>
                     <span>타임라인</span>
@@ -2223,27 +2214,23 @@
                 </div>
               </div>
 
-              {/* 2단: 한 줄 요약 배지 + 핵심 액션 (가로 스크롤 지원으로 모바일에서 절대 줄바꿈 깨짐 없음) */}
-              <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar pt-0.5">
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1.5">
+              {/* 2단: 슬림 요약 배지(완료·총 도보·예산) + 우측 액션(최단경로·장소추가) — 모바일 화면에 쏙 들어오는 비율 */}
+              <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
+                  <div className="bg-slate-800 border border-slate-700 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0">
                     <span className="text-slate-400 font-bold">완료</span>
                     <span className="font-black text-white">
-                      {pins.filter((p) => p.completed).length}/{pins.length}곳
+                      {pins.filter((p) => p.completed).length}/{pins.length}
                     </span>
                   </div>
-                  <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1.5">
-                    <span className="font-extrabold text-amber-300">
-                      🚇 {budgetStats.totalTransitFormatted}
-                    </span>
-                    <span className="text-slate-500">·</span>
+                  <div className="bg-slate-800 border border-slate-700 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0">
                     <span className="font-extrabold text-emerald-400">
-                      🚶 {budgetStats.totalWalkFormatted}
+                      🚶 도보 {budgetStats.totalWalkFormatted}
                     </span>
                   </div>
                   <div
                     onClick={() => switchAppView("budget")}
-                    className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1 cursor-pointer hover:border-emerald-500/50 transition"
+                    className="hidden xs:flex sm:flex bg-slate-800 border border-slate-700 px-2 py-1 rounded-xl text-[11px] items-center gap-1 cursor-pointer hover:border-emerald-500/50 transition shrink-0"
                   >
                     <span className="text-slate-400 font-bold">예산</span>
                     <span className="font-black text-emerald-400">
@@ -2255,60 +2242,49 @@
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={handleOptimizeShortestRoute}
-                    className="px-2.5 py-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] sm:text-xs font-black shadow transition"
+                    className="px-2.5 py-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-black shadow-sm transition"
                   >
                     ⚡ 최단경로
                   </button>
                   <button
                     onClick={() => setShowAddModal(true)}
-                    className="px-3 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-[11px] sm:text-xs font-extrabold shadow transition"
+                    className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-[11px] font-extrabold shadow-sm transition"
                   >
-                    ＋ 장소 추가
+                    ＋ 장소추가
                   </button>
                 </div>
               </div>
 
-              {/* 데스크탑(맥북) 상단 앱 탭 바 — 모바일 앱과 동일한 4개 탭 구성 */}
-              <div className="hidden lg:grid lg:grid-cols-4 gap-2 pt-1">
+              {/* 데스크탑(맥북) 상단 앱 탭 바 — 모바일 앱과 동일한 3개 탭 구성 */}
+              <div className="hidden lg:grid lg:grid-cols-3 gap-2 pt-1">
                 <button
                   onClick={() => switchAppView("split")}
                   className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
                     currentView === "split"
                       ? "bg-indigo-600 keep-white border-indigo-500 shadow-md"
-                      : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-indigo-400"
+                      : "bg-slate-800 text-slate-300 border-slate-700 hover:border-indigo-400"
                   }`}
                 >
                   <span>🗺️</span>
-                  <span>지도 + 코스 화면</span>
-                </button>
-                <button
-                  onClick={() => switchAppView("list")}
-                  className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
-                    currentView === "list"
-                      ? "bg-indigo-600 keep-white border-indigo-500 shadow-md"
-                      : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-indigo-400"
-                  }`}
-                >
-                  <span>📋</span>
-                  <span>코스 상세 · 평균값 ({pins.length})</span>
+                  <span>지도 + 여행 코스 ({pins.length})</span>
                 </button>
                 <button
                   onClick={() => switchAppView("notepad")}
                   className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
                     currentView === "notepad"
                       ? "bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black"
-                      : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-amber-400"
+                      : "bg-slate-800 text-slate-300 border-slate-700 hover:border-amber-400"
                   }`}
                 >
                   <span>📝</span>
-                  <span>대형 자유 메모장 · 체크리스트</span>
+                  <span>자유 메모장 · 체크리스트</span>
                 </button>
                 <button
                   onClick={() => switchAppView("budget")}
                   className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
                     currentView === "budget"
                       ? "bg-emerald-600 keep-white border-emerald-500 shadow-md"
-                      : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-emerald-400"
+                      : "bg-slate-800 text-slate-300 border-slate-700 hover:border-emerald-400"
                   }`}
                 >
                   <span>💰</span>
@@ -2319,27 +2295,16 @@
           </header>
 
           {/* =================================================================
-              🗺️ 메인 영역 1: 지도+코스 (split) 및 코스·상세 전용 뷰 (list)
-              (상세·평균값 탭의 모든 기능이 각 코스 카드 내부에 올인원으로 통합됨!)
+              🗺️ 메인 영역 1: 지도 + 여행 코스 (눈이 편안하고 여백이 살아있는 카드 뷰)
              ================================================================= */}
           <main
-            className={`flex-1 max-w-[1160px] w-full mx-auto p-2.5 sm:p-4 ${
-              currentView === "split" || currentView === "list" ? "block" : "hidden"
+            className={`flex-1 max-w-[1160px] w-full mx-auto px-3 py-3 sm:p-5 ${
+              currentView === "split" ? "block" : "hidden"
             }`}
           >
-            <div
-              className={`grid grid-cols-1 ${
-                currentView === "split" ? "lg:grid-cols-12" : "max-w-[820px] mx-auto"
-              } gap-3 sm:gap-4`}
-            >
-              {/* 1. 지도 패널 (지도+코스 탭에서만 표시, 코스 전용 탭에서는 숨겨서 넓은 가독성 확보) */}
-              <section
-                className={`${
-                  currentView === "split"
-                    ? "lg:col-span-6 lg:order-2 flex h-[34vh] min-h-[235px] sm:h-[40vh] lg:h-[78vh] lg:sticky lg:top-32"
-                    : "hidden"
-                } flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl relative`}
-              >
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
+              {/* 1. 지도 패널 */}
+              <section className="lg:col-span-6 lg:order-2 flex h-[30vh] min-h-[210px] sm:h-[38vh] lg:h-[78vh] lg:sticky lg:top-32 flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-lg relative">
                 <div ref={mapContainerRef} className="w-full h-full flex-1 z-10" />
 
                 <div className="absolute top-2.5 left-2.5 right-2.5 z-20 flex items-center justify-between gap-1.5 pointer-events-none">
@@ -2356,26 +2321,26 @@
                         mapInstanceRef.current.flyToBounds(bounds.pad(0.3), { duration: 0.8 });
                       }
                     }}
-                    className="bg-slate-900/95 hover:bg-slate-800 border border-slate-700 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold text-white shadow-lg pointer-events-auto"
+                    className="bg-slate-900 hover:bg-slate-800 border border-slate-700 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold text-white shadow-lg pointer-events-auto"
                   >
                     🔍 전체 코스 한눈에
                   </button>
                 </div>
 
                 {(animatingInfo || lastCompletedSegment) && (
-                  <div className="absolute bottom-2.5 left-2.5 right-2.5 z-30 bg-slate-900/95 backdrop-blur-xl border-2 border-sky-500 rounded-2xl p-2.5 sm:p-3 shadow-2xl">
+                  <div className="absolute bottom-2.5 left-2.5 right-2.5 z-30 bg-slate-900 backdrop-blur-xl border-2 border-sky-500 rounded-2xl p-2.5 sm:p-3 shadow-2xl">
                     {animatingInfo ? (
                       <>
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-[11px] font-extrabold text-sky-400">
                             🕒 타임라인 이동 중... ({animatingInfo.progress}%)
                           </span>
-                          <span className="text-xs font-black text-amber-300">
-                            🚇 {animatingInfo.transit.transitFormatted} · 🚶 {animatingInfo.transit.walkFormatted}
+                          <span className="text-xs font-black text-emerald-400">
+                            🚶 도보 약 {animatingInfo.transit.walkFormatted} ({animatingInfo.transit.distanceKm}km)
                           </span>
                         </div>
                         <div className="text-xs font-extrabold text-white truncate">
-                          📍 {animatingInfo.fromPin.name} ━━🚇━━▶ 🎯 {animatingInfo.toPin.name}
+                          📍 {animatingInfo.fromPin.name} ━━🚶━━▶ 🎯 {animatingInfo.toPin.name}
                         </div>
                       </>
                     ) : (
@@ -2383,12 +2348,13 @@
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
                             <div className="text-[11px] font-bold text-emerald-400">
-                              ✅ 이동 구간 소요시간 안내
+                              ✅ 다음 장소 도보 소요시간
                             </div>
-                            <div className="text-xs font-black text-amber-300 mt-0.5 truncate">
+                            <div className="text-xs font-black text-white mt-0.5 truncate">
                               {lastCompletedSegment.fromPin.name} → {lastCompletedSegment.toPin.name} :{" "}
-                              <span>🚇 {lastCompletedSegment.transit.transitFormatted}</span> /{" "}
-                              <span>🚶 {lastCompletedSegment.transit.walkFormatted}</span>{" "}
+                              <span className="text-emerald-400">
+                                🚶 도보 약 {lastCompletedSegment.transit.walkFormatted}
+                              </span>{" "}
                               ({lastCompletedSegment.transit.distanceKm}km)
                             </div>
                           </div>
@@ -2405,33 +2371,27 @@
                 )}
               </section>
 
-              {/* 2. 코스 & 올인원 상세·평균값 리스트 패널 */}
-              <section
-                className={`${
-                  currentView === "split" ? "lg:col-span-6 lg:order-1" : "w-full"
-                } flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl`}
-              >
-                <div className="p-3.5 sm:p-4 border-b border-slate-800 flex items-center justify-between gap-2">
+              {/* 2. 슬림 & 클린 여행 코스 리스트 패널 */}
+              <section className="lg:col-span-6 lg:order-1 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-lg">
+                <div className="px-4 py-3.5 border-b border-slate-800 flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <h2 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-1.5">
-                      <span>📍 여행 코스 & 장소별 평균값·예산</span>
+                      <span>📍 여행 코스</span>
                       <span className="text-indigo-400">({pins.length}곳)</span>
                     </h2>
                     <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                      코스를 누르면 방문객 평균 지출액·메모·예산을 바로 관리할 수 있습니다
+                      코스를 누르면 평균 지출액·메모·예산 상세창이 펼쳐집니다
                     </p>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => setShowAddModal(true)}
-                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shadow"
-                    >
-                      ＋ 장소 추가
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shadow-sm shrink-0"
+                  >
+                    ＋ 장소 추가
+                  </button>
                 </div>
 
-                <div className="p-3 sm:p-4 space-y-2.5">
+                <div className="p-3 sm:p-4 space-y-2">
                   {pins.length === 0 ? (
                     <div className="text-center py-12 px-4 space-y-3">
                       <div className="text-4xl">🗺️</div>
@@ -2459,6 +2419,7 @@
                   ) : (
                     pins.map((pin, index) => {
                       const isSelected = pin.id === selectedPin?.id;
+                      const isExpanded = expandedPinId === pin.id;
                       const pinTotalKRW = pin.items.reduce((s, i) => s + Number(i.price || 0), 0);
                       const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
                       const prevPin = index > 0 ? pins[index - 1] : null;
@@ -2476,6 +2437,7 @@
                             onDragOver={(e) => e.preventDefault()}
                             onClick={() => {
                               setSelectedPinId(pin.id);
+                              setExpandedPinId((prev) => (prev === pin.id ? null : pin.id));
                               if (mapInstanceRef.current) {
                                 mapInstanceRef.current.flyTo([pin.lat, pin.lng], 16, { duration: 0.7 });
                                 if (markersRef.current[index]) {
@@ -2483,19 +2445,19 @@
                                 }
                               }
                             }}
-                            className={`p-3.5 sm:p-4 rounded-2xl border transition cursor-pointer ${
-                              isSelected
-                                ? "bg-indigo-950/60 border-indigo-500 shadow-lg"
+                            className={`p-3.5 rounded-2xl border transition cursor-pointer ${
+                              isExpanded
+                                ? "bg-indigo-950/60 border-indigo-500 shadow-md"
                                 : pin.completed
-                                ? "bg-slate-900/70 border-emerald-500/40"
-                                : "bg-slate-800/50 border-slate-700/70 hover:border-slate-600"
+                                ? "bg-slate-900 border-emerald-500/40"
+                                : "bg-slate-800 border-slate-700 hover:border-slate-600"
                             }`}
                           >
-                            {/* 카드 상단: 번호 + 카테고리/이름 + 순서/삭제 버튼 */}
+                            {/* 1열: 번호 뱃지 + 장소명/카테고리 + 순서/삭제 버튼 */}
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex items-start gap-2.5 min-w-0">
                                 <span
-                                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0 mt-0.5 ${
+                                  className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0 mt-0.5 ${
                                     pin.completed
                                       ? "bg-emerald-500 text-slate-950"
                                       : isSelected
@@ -2507,12 +2469,12 @@
                                 </span>
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-[11px] font-extrabold text-indigo-400">
+                                    <span className="text-[11px] font-bold text-indigo-400">
                                       {pin.category}
                                     </span>
                                     {pin.memo && (
-                                      <span className="text-[10px] font-bold bg-amber-500/15 text-amber-300 px-1.5 py-0.5 rounded-md">
-                                        📝 메모있음
+                                      <span className="text-[10px] font-bold text-slate-400 truncate max-w-[170px] sm:max-w-[240px]">
+                                        · 📝 {pin.memo}
                                       </span>
                                     )}
                                   </div>
@@ -2530,7 +2492,7 @@
                                   onClick={() => handleMovePinOrder(index, -1)}
                                   disabled={index === 0}
                                   title="위로 이동"
-                                  className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 disabled:opacity-25 text-xs flex items-center justify-center"
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-900 hover:bg-slate-700 border border-slate-700 text-slate-300 disabled:opacity-25 text-[11px] flex items-center justify-center"
                                 >
                                   ▲
                                 </button>
@@ -2538,7 +2500,7 @@
                                   onClick={() => handleMovePinOrder(index, 1)}
                                   disabled={index === pins.length - 1}
                                   title="아래로 이동"
-                                  className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 disabled:opacity-25 text-xs flex items-center justify-center"
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-900 hover:bg-slate-700 border border-slate-700 text-slate-300 disabled:opacity-25 text-[11px] flex items-center justify-center"
                                 >
                                   ▼
                                 </button>
@@ -2554,62 +2516,109 @@
                                     )
                                   }
                                   title="코스 삭제"
-                                  className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 text-xs font-black flex items-center justify-center ml-0.5"
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 text-xs font-black flex items-center justify-center ml-0.5"
                                 >
                                   ✕
                                 </button>
                               </div>
                             </div>
 
-                            {/* 📊 구글 맵 방문객 평균 지출액 & 원터치 예산 담기 (기존 상세·평균값 탭 기능 통합) */}
+                            {/* 2열(슬림 요약 바): 평균 지출액 & 내 예산 한 줄 표시 + 우측 [상세·예산 ▾] / [완료] */}
                             <div
-                              className="mt-3 google-avg-spend-box p-3 rounded-2xl space-y-2"
+                              className="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center justify-between gap-2 flex-wrap"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <span className="spend-tag text-[11px] font-extrabold px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                                  <span>📊</span>
-                                  <span>구글 맵 방문객 인당 평균</span>
+                              <div
+                                onClick={() =>
+                                  setExpandedPinId((prev) => (prev === pin.id ? null : pin.id))
+                                }
+                                className="flex items-center gap-2 text-[11px] sm:text-xs cursor-pointer"
+                              >
+                                <span className="font-bold text-slate-300">
+                                  📊 평균 <b className="text-amber-300">{avgSpend.label}</b>
                                 </span>
-                                <span className="spend-price text-xs sm:text-sm font-black">
-                                  {avgSpend.label} (약 {formatKRW(avgSpend.avgYen * exchangeRate)})
+                                <span className="text-slate-500">·</span>
+                                <span className="font-extrabold text-emerald-400">
+                                  내 예산 {formatKRW(pinTotalKRW)}
                                 </span>
                               </div>
-                              <div className="flex items-center gap-1.5 pt-0.5">
+
+                              <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => handleApplyGoogleAvgSpend(pin, 1)}
-                                  className="flex-1 py-1.5 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 keep-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
+                                  onClick={() =>
+                                    setExpandedPinId((prev) => (prev === pin.id ? null : pin.id))
+                                  }
+                                  className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-700 border border-slate-700 text-[11px] font-extrabold text-indigo-400"
                                 >
-                                  ＋ 1인 평균({formatJPY(avgSpend.avgYen)}) 담기
+                                  {isExpanded ? "접기 ▴" : "상세·예산 ▾"}
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleApplyGoogleAvgSpend(pin, peopleCount)}
-                                  className="flex-1 py-1.5 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
-                                >
-                                  ＋ {peopleCount}인({formatJPY(avgSpend.avgYen * peopleCount)}) 담기
-                                </button>
+
+                                {!pin.completed ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCompleteAndMoveNext(pin.id)}
+                                    className="px-2.5 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] shadow-sm"
+                                  >
+                                    ✅ 완료
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setPins((prev) =>
+                                        prev.map((p) =>
+                                          p.id === pin.id ? { ...p, completed: false } : p
+                                        )
+                                      )
+                                    }
+                                    className="px-2 py-1 rounded-xl bg-slate-900 text-slate-400 text-[11px] font-bold border border-slate-700"
+                                  >
+                                    ↩ 취소
+                                  </button>
+                                )}
                               </div>
                             </div>
 
-                            {/* 장소 메모 미리보기 (접혀 있을 때도 한눈에 보임) */}
-                            {!isSelected && pin.memo && (
-                              <div className="mt-2 px-3 py-2 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-300 line-clamp-2">
-                                📝 {pin.memo}
-                              </div>
-                            )}
-
-                            {/* 🔽 선택된 카드 인라인 상세 영역 (이름수정 / 메모 / 지출항목 추가·관리) */}
-                            {isSelected && (
+                            {/* 🔽 카드를 눌렀을 때만 펼쳐지는 깔끔한 상세 서랍 (평균값 원터치 담기 + 메모 + 지출 관리) */}
+                            {isExpanded && (
                               <div
                                 className="mt-3 pt-3 border-t border-slate-700/80 space-y-3"
                                 onClick={(e) => e.stopPropagation()}
                               >
+                                {/* 📊 구글 맵 방문객 인당 평균 지출액 & 원터치 예산 담기 */}
+                                <div className="google-avg-spend-box p-3 rounded-2xl space-y-2">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <span className="spend-tag text-[11px] font-extrabold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                      <span>📊</span>
+                                      <span>구글 맵 방문객 인당 평균</span>
+                                    </span>
+                                    <span className="spend-price text-xs sm:text-sm font-black">
+                                      {avgSpend.label} (약 {formatKRW(avgSpend.avgYen * exchangeRate)})
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 pt-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleApplyGoogleAvgSpend(pin, 1)}
+                                      className="flex-1 py-1.5 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 keep-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
+                                    >
+                                      ＋ 1인 평균({formatJPY(avgSpend.avgYen)}) 담기
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleApplyGoogleAvgSpend(pin, peopleCount)}
+                                      className="flex-1 py-1.5 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
+                                    >
+                                      ＋ {peopleCount}인({formatJPY(avgSpend.avgYen * peopleCount)}) 담기
+                                    </button>
+                                  </div>
+                                </div>
+
                                 {/* 이름·카테고리 수정 & 구글맵 바로가기 */}
                                 <div className="flex items-center justify-between gap-2 flex-wrap">
                                   <span className="text-[11px] font-extrabold text-indigo-400">
-                                    ✨ 장소 상세 설정 · 메모 · 지출 관리
+                                    ✨ 장소 설정 · 메모 · 예산 항목
                                   </span>
                                   <div className="flex items-center gap-1.5">
                                     <button
@@ -2680,16 +2689,16 @@
                                   </div>
                                 )}
 
-                                {/* 이전/다음 장소 이동 소요시간 요약 */}
+                                {/* 이전/다음 장소 도보 소요시간 요약 */}
                                 {(transitFromPrev || transitToNext) && (
-                                  <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1">
+                                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1">
                                     {transitFromPrev && (
                                       <div className="flex items-center justify-between gap-2">
                                         <span className="text-slate-400 truncate">
                                           ⬅️ <b>{prevPin.name}</b>에서:
                                         </span>
-                                        <span className="font-extrabold text-amber-300 shrink-0">
-                                          🚇 {transitFromPrev.transitFormatted} · 🚶 {transitFromPrev.walkFormatted}
+                                        <span className="font-extrabold text-emerald-400 shrink-0">
+                                          🚶 도보 약 {transitFromPrev.walkFormatted} ({transitFromPrev.distanceKm}km)
                                         </span>
                                       </div>
                                     )}
@@ -2698,8 +2707,8 @@
                                         <span className="text-slate-400 truncate">
                                           ➡️ 다음 <b>{nextPin.name}</b>까지:
                                         </span>
-                                        <span className="font-extrabold text-indigo-400 shrink-0">
-                                          🚇 {transitToNext.transitFormatted} · 🚶 {transitToNext.walkFormatted}
+                                        <span className="font-extrabold text-emerald-400 shrink-0">
+                                          🚶 도보 약 {transitToNext.walkFormatted} ({transitToNext.distanceKm}km)
                                         </span>
                                       </div>
                                     )}
@@ -2789,7 +2798,7 @@
                                           className={`flex items-center justify-between p-2.5 rounded-xl border ${
                                             item.bought
                                               ? "bg-emerald-950/20 border-emerald-500/40"
-                                              : "bg-slate-950/90 border-slate-800"
+                                              : "bg-slate-950 border-slate-800"
                                           }`}
                                         >
                                           <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
@@ -2867,85 +2876,31 @@
                                 </div>
                               </div>
                             )}
-
-                            {/* 카드 하단: 내 예산 요약 + 상세 열기/접기 + 방문 완료(OK) 버튼 */}
-                            <div
-                              className="mt-3 pt-2.5 border-t border-slate-800 flex items-center justify-between gap-2 flex-wrap"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-extrabold text-emerald-400">
-                                  내 예산({pin.items.length}건): {formatKRW(pinTotalKRW)}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedPinId(isSelected ? null : pin.id)
-                                  }
-                                  className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-extrabold text-indigo-400"
-                                >
-                                  {isSelected ? "상세 접기 ▴" : "메모·예산 상세 ▾"}
-                                </button>
-                              </div>
-
-                              {!pin.completed ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleCompleteAndMoveNext(pin.id)}
-                                  className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow"
-                                >
-                                  ✅ 방문완료 (다음 이동)
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setPins((prev) =>
-                                      prev.map((p) =>
-                                        p.id === pin.id ? { ...p, completed: false } : p
-                                      )
-                                    )
-                                  }
-                                  className="px-2.5 py-1 rounded-xl bg-slate-800 text-slate-300 text-[11px] font-bold border border-slate-700"
-                                >
-                                  ↩ 완료 취소
-                                </button>
-                              )}
-                            </div>
                           </div>
 
-                          {/* 구간 이동 소요시간 타임라인 연결 카드 */}
+                          {/* 🚶 코스 사이 슬림한 1줄 도보 연결 바 (대중교통 제거 & 답답함 없이 깔끔한 여백) */}
                           {transitToNext && (
-                            <div className="my-1.5 pl-3 flex items-center justify-between bg-indigo-950/35 border border-indigo-500/40 rounded-2xl px-3 py-2.5 gap-2">
-                              <div className="space-y-1 min-w-0">
-                                <div className="text-[11px] text-slate-300 font-bold truncate">
-                                  #{index + 1} {pin.name} → #{index + 2} {nextPin.name}{" "}
-                                  <span className="text-slate-400">({transitToNext.distanceKm}km)</span>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs font-extrabold">
-                                  <span className="bg-indigo-500/20 border border-indigo-400/40 text-amber-300 px-2 py-0.5 rounded-lg">
-                                    🚇 대중교통 약 {transitToNext.transitFormatted}
-                                  </span>
-                                  <span className="bg-emerald-500/20 border border-emerald-400/40 text-emerald-400 px-2 py-0.5 rounded-lg">
-                                    🚶 도보 약 {transitToNext.walkFormatted}
-                                  </span>
-                                </div>
+                            <div className="my-1 px-3 py-1.5 flex items-center justify-between gap-2 rounded-xl bg-slate-800/60 border border-slate-700/60 text-[11px]">
+                              <div className="flex items-center gap-1.5 min-w-0 truncate">
+                                <span className="text-emerald-400 font-extrabold">
+                                  🚶 도보 약 {transitToNext.walkFormatted}
+                                </span>
+                                <span className="text-slate-400">
+                                  ({transitToNext.distanceKm}km)
+                                </span>
                               </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex items-center gap-1 shrink-0">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    if (currentView === "list") switchAppView("split");
-                                    setTimeout(() => animateBetweenPins(pin, nextPin), 120);
-                                  }}
-                                  className="px-2.5 py-1.5 rounded-xl timeline-btn keep-white text-[11px] font-extrabold"
+                                  onClick={() => animateBetweenPins(pin, nextPin)}
+                                  className="px-2 py-0.5 rounded-lg timeline-btn keep-white text-[10px] font-extrabold"
                                 >
-                                  ▶ 이동보기
+                                  ▶ 이동
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => openGoogleMapsTransit(pin, nextPin)}
-                                  className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold border border-slate-700"
+                                  className="px-2 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-700 text-slate-300 text-[10px] font-bold border border-slate-700"
                                 >
                                   길찾기↗
                                 </button>
@@ -3322,38 +3277,29 @@
             </main>
           )}
 
-          {/* 📱 모바일 하단 앱 네비게이션 (상세·평균값 버튼 제거 → 4개 탭으로 깔끔하고 넉넉하게 배치) */}
-          <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 grid grid-cols-4 px-2 py-1.5 shadow-2xl">
+          {/* 📱 모바일 하단 앱 네비게이션 (중복 코스·상세 탭 제거 → 3개 핵심 탭으로 넓고 쾌적하게 배치) */}
+          <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 grid grid-cols-3 px-3 py-1.5 gap-1 shadow-2xl">
             <button
               onClick={() => switchAppView("split")}
-              className={`flex flex-col items-center py-1.5 rounded-2xl text-[11px] font-extrabold transition ${
+              className={`flex flex-col items-center py-1.5 rounded-2xl text-xs font-extrabold transition ${
                 currentView === "split" ? "text-indigo-400 bg-indigo-500/15" : "text-slate-400"
               }`}
             >
               <span className="text-base leading-none mb-0.5">🗺️</span>
-              <span>지도+코스</span>
-            </button>
-            <button
-              onClick={() => switchAppView("list")}
-              className={`flex flex-col items-center py-1.5 rounded-2xl text-[11px] font-extrabold transition ${
-                currentView === "list" ? "text-indigo-400 bg-indigo-500/15" : "text-slate-400"
-              }`}
-            >
-              <span className="text-base leading-none mb-0.5">📋</span>
-              <span>코스·상세({pins.length})</span>
+              <span>지도+코스({pins.length})</span>
             </button>
             <button
               onClick={() => switchAppView("notepad")}
-              className={`flex flex-col items-center py-1.5 rounded-2xl text-[11px] font-extrabold transition ${
+              className={`flex flex-col items-center py-1.5 rounded-2xl text-xs font-extrabold transition ${
                 currentView === "notepad" ? "text-amber-400 bg-amber-500/15" : "text-slate-400"
               }`}
             >
               <span className="text-base leading-none mb-0.5">📝</span>
-              <span>대형메모장</span>
+              <span>메모장</span>
             </button>
             <button
               onClick={() => switchAppView("budget")}
-              className={`flex flex-col items-center py-1.5 rounded-2xl text-[11px] font-extrabold transition ${
+              className={`flex flex-col items-center py-1.5 rounded-2xl text-xs font-extrabold transition ${
                 currentView === "budget" ? "text-emerald-400 bg-emerald-500/15" : "text-slate-400"
               }`}
             >
