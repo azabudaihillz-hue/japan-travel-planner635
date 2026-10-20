@@ -1,4 +1,90 @@
-// api/sync.js (맥북 <-> 내 폰 <-> 여자친구 폰 실시간 클라우드 동기화 서버)
+/**
+ * Vercel Serverless Function: /api/sync
+ *
+ * couple-calendar-new (https://github.com/azabudaihillz-hue/couple-calendar-new) 에서 사용 중인
+ * Supabase 실시간 데이터베이스(abjspnuohxouufkdjefs.supabase.co)를 활용하여
+ * 맥북 · 내 핸드폰 · 여자친구 핸드폰 등 모든 기기에서 상시 실시간 동기화를 수행합니다.
+ */
+
+const SUPABASE_URL =
+  process.env.SUPABASE_URL || "https://abjspnuohxouufkdjefs.supabase.co";
+const SUPABASE_ANON_KEY =
+  process.env.SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFianNwbnVvaHhvdXVma2RqZWZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMDA5NzcsImV4cCI6MjEwNDg3Njk3N30.hVL3TRPwA1xalf1Tb2LiKJ58Q_DgBc5RWwFs2AfR890";
+
+// couple_calendar 테이블은 YYYY-MM-DD 형식만 달력에 렌더링하고 memo에 '♥'가 있을 때만 D-Day로 잡으므로
+// 전용 키 'JAPAN_TRAVEL_PLANNER_635' 와 memo: '' 를 사용하면 기존 커플 캘린더에 전혀 영향을 주지 않습니다.
+const SYNC_ROW_KEY = "JAPAN_TRAVEL_PLANNER_635";
+
+let memoryFallback = null;
+
+function getSupabaseHeaders(extra = {}) {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
+async function fetchFromSupabase() {
+  const endpoint = `${SUPABASE_URL}/rest/v1/couple_calendar?date=eq.${encodeURIComponent(
+    SYNC_ROW_KEY
+  )}&select=*`;
+
+  const res = await fetch(endpoint, {
+    method: "GET",
+    headers: getSupabaseHeaders({ "Cache-Control": "no-cache" }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Supabase GET failed (${res.status}): ${errText}`);
+  }
+
+  const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return null;
+  }
+
+  const row = rows[0];
+  if (row.hae_shift && typeof row.hae_shift === "object") {
+    return row.hae_shift;
+  }
+  if (row.hae_memo && typeof row.hae_memo === "string") {
+    try {
+      return JSON.parse(row.hae_memo);
+    } catch (e) {
+      // ignore parse error
+    }
+  }
+  return null;
+}
+
+async function saveToSupabase(payload) {
+  const endpoint = `${SUPABASE_URL}/rest/v1/couple_calendar?on_conflict=date`;
+  const rowBody = {
+    date: SYNC_ROW_KEY,
+    memo: "",
+    hae_shift: payload,
+    hae_memo: JSON.stringify(payload),
+  };
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: getSupabaseHeaders({
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    }),
+    body: JSON.stringify(rowBody),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Supabase UPSERT failed (${res.status}): ${errText}`);
+  }
+  return true;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -9,93 +95,72 @@ module.exports = async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // GitHub 저장소를 무료 실시간 클라우드 DB로 활용 (환경변수 또는 기본 토큰 사용)
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "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";
-  const REPO_OWNER = "azabudaihillz-hue";
-  const REPO_NAME = "japan-travel-planner635";
-  const FILE_PATH = "trip-data.json";
-  const apiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`;
-
-  const headers = {
-    Authorization: `token ${GITHUB_TOKEN}`,
-    Accept: "application/vnd.github.v3+json",
-    "User-Agent": "SmartTravelPlanner-CloudSync"
-  };
-
   try {
-    // 1. [GET] 클라우드에 저장된 최신 여행 데이터 불러오기
     if (req.method === "GET") {
-      const getRes = await fetch(`${apiUrl}?t=${Date.now()}`, { headers });
-
-      if (getRes.status === 404) {
-        return res.status(200).json({ exists: false, data: null });
+      try {
+        const cloudData = await fetchFromSupabase();
+        if (cloudData) {
+          memoryFallback = cloudData;
+          return res.status(200).json(cloudData);
+        }
+      } catch (err) {
+        if (memoryFallback) {
+          return res.status(200).json(memoryFallback);
+        }
       }
-
-      if (!getRes.ok) {
-        const errText = await getRes.text();
-        return res.status(200).json({ exists: false, data: null, warning: errText });
-      }
-
-      const fileJson = await getRes.json();
-      const contentStr = Buffer.from(fileJson.content, "base64").toString("utf8");
-      const parsedData = JSON.parse(contentStr);
-
-      return res.status(200).json({
-        exists: true,
-        sha: fileJson.sha,
-        data: parsedData
-      });
+      return res.status(200).json(
+        memoryFallback || {
+          pins: [],
+          notes: [],
+          checklist: [],
+          empty: true,
+          updatedAt: 0,
+        }
+      );
     }
 
-    // 2. [POST] 변경된 여행 코스·예산·대형 메모장 내용을 클라우드에 즉시 저장하기
     if (req.method === "POST") {
-      const bodyData = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      const body =
+        typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
 
-      // 기존 파일 SHA 조회
-      let currentSha = undefined;
-      const checkRes = await fetch(`${apiUrl}?t=${Date.now()}`, { headers });
-      if (checkRes.ok) {
-        const checkJson = await checkRes.json();
-        currentSha = checkJson.sha;
+      // 빈 초기 기기가 기존 클라우드 데이터를 덮어쓰는 현상 방지
+      const incomingPins = Array.isArray(body.pins) ? body.pins : [];
+      if (incomingPins.length === 0 && !body.explicitlyCleared && !body.forceOverwrite) {
+        try {
+          const existing = await fetchFromSupabase();
+          if (existing && Array.isArray(existing.pins) && existing.pins.length > 0) {
+            return res.status(200).json({
+              ok: false,
+              skippedEmptyOverwrite: true,
+              cloudData: existing,
+            });
+          }
+        } catch (e) {
+          // ignore check error
+        }
       }
 
-      const payloadToSave = {
-        ...bodyData,
-        updatedAt: new Date().toISOString()
+      const payload = {
+        ...body,
+        pins: incomingPins,
+        updatedAt: body.updatedAt || Date.now(),
       };
 
-      const encodedContent = Buffer.from(JSON.stringify(payloadToSave, null, 2), "utf8").toString("base64");
-
-      const putBody = {
-        message: "cloud-sync: 실시간 여행 계획 및 메모 동기화",
-        content: encodedContent
-      };
-      if (currentSha) {
-        putBody.sha = currentSha;
-      }
-
-      const putRes = await fetch(apiUrl, {
-        method: "PUT",
-        headers: {
-          ...headers,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(putBody)
-      });
-
-      if (!putRes.ok) {
-        const putErr = await putRes.text();
-        return res.status(500).json({ success: false, error: putErr });
-      }
+      memoryFallback = payload;
+      await saveToSupabase(payload);
 
       return res.status(200).json({
-        success: true,
-        updatedAt: payloadToSave.updatedAt
+        ok: true,
+        updatedAt: payload.updatedAt,
+        storage: "supabase-couple-calendar",
       });
     }
 
     return res.status(405).json({ error: "Method not allowed" });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+  } catch (err) {
+    return res.status(500).json({
+      error: "Sync error",
+      details: err.message,
+    });
   }
 };

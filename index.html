@@ -17,6 +17,9 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- Supabase Realtime Client (couple-calendar-new 실시간 동기화 엔진) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <!-- Pretendard Font -->
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 
@@ -157,6 +160,18 @@
     const STORAGE_KEY_NOTES = "travel_planner_master_notes";
     const STORAGE_KEY_CHECKLIST = "travel_planner_master_checklist";
     const STORAGE_KEY_THEME = "travel_planner_master_theme";
+    const STORAGE_KEY_MASTER_V6 = "japan_trip_v6_master_local";
+
+    // 🔗 couple-calendar-new (https://github.com/azabudaihillz-hue/couple-calendar-new) 실시간 동기화 설정
+    const SUPABASE_URL = "https://abjspnuohxouufkdjefs.supabase.co";
+    const SUPABASE_ANON_KEY =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFianNwbnVvaHhvdXVma2RqZWZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMDA5NzcsImV4cCI6MjEwNDg3Njk3N30.hVL3TRPwA1xalf1Tb2LiKJ58Q_DgBc5RWwFs2AfR890";
+    const SUPABASE_SYNC_KEY = "JAPAN_TRAVEL_PLANNER_635";
+    const supabaseClient =
+      typeof window !== "undefined" && window.supabase && window.supabase.createClient
+        ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+        : null;
+    const CLIENT_ID = "device-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now();
 
     const DEFAULT_NOTE_PAD = [
       {
@@ -185,6 +200,15 @@
         if (masterData) {
           const parsed = JSON.parse(masterData);
           if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+
+        const v6Raw = localStorage.getItem(STORAGE_KEY_MASTER_V6);
+        if (v6Raw) {
+          const parsedV6 = JSON.parse(v6Raw);
+          if (parsedV6 && Array.isArray(parsedV6.pins) && parsedV6.pins.length > 0) {
+            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(parsedV6.pins));
+            return parsedV6.pins;
+          }
         }
 
         const legacyKeys = [
@@ -455,13 +479,60 @@
       return "¥" + Math.round(Number(num || 0)).toLocaleString("ja-JP");
     }
 
-    function parseGoogleMapsUrlClient(rawUrl) {
+    function extractUrlAndHintFromInput(rawInput) {
+      if (!rawInput || typeof rawInput !== "string") {
+        return { cleanUrl: null, textHint: "" };
+      }
+      const trimmed = rawInput.trim();
+      const urlMatch = trimmed.match(/(https?:\/\/[^\s"'<>]+)/i);
+      if (!urlMatch) {
+        return { cleanUrl: null, textHint: trimmed };
+      }
+      const cleanUrl = urlMatch[1].replace(/[).,;]+$/, "");
+      const textHint = trimmed
+        .replace(urlMatch[0], " ")
+        .replace(/Google\s*지도에서\s*보기/gi, "")
+        .replace(/Shared\s*via\s*Google\s*Maps/gi, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      return { cleanUrl, textHint };
+    }
+
+    function parseGoogleMapsUrlClient(rawInput) {
       try {
-        const decoded = decodeURIComponent(rawUrl);
-        let name = "구글 지도 공유 장소";
-        const placeMatch = decoded.match(/\/maps\/place\/([^/@?]+)/);
+        const { cleanUrl, textHint } = extractUrlAndHintFromInput(rawInput);
+        const target = cleanUrl || rawInput;
+        if (!target) return null;
+
+        // 모바일 구글맵 단축 링크(maps.app.goo.gl / goo.gl)는 서버 리다이렉트 추적(/api/resolve)을 거치도록 null 반환
+        if (target.includes("maps.app.goo.gl") || target.includes("goo.gl/maps") || target.includes("goo.gl/")) {
+          const hasInlineCoords = /(!3d-?\d+\.\d+!4d-?\d+\.\d+|@-?\d+\.\d+,-?\d+\.\d+)/.test(target);
+          if (!hasInlineCoords) return null;
+        }
+
+        const decoded = (() => {
+          try {
+            return decodeURIComponent(target);
+          } catch (e) {
+            return target;
+          }
+        })();
+
+        let name = textHint || "구글 지도 공유 장소";
+        const placeMatch = decoded.match(/\/maps\/(?:place|search)\/([^/@?&]+)/);
         if (placeMatch && placeMatch[1]) {
-          name = placeMatch[1].replace(/\+/g, " ").trim();
+          const candidate = placeMatch[1].replace(/\+/g, " ").trim();
+          if (candidate && !/^(-?\d+\.\d+),(-?\d+\.\d+)$/.test(candidate)) {
+            name = candidate;
+          }
+        } else {
+          const qMatch = decoded.match(/[?&](?:q|query)=([^&]+)/);
+          if (qMatch && qMatch[1]) {
+            const candidate = qMatch[1].replace(/\+/g, " ").trim();
+            if (candidate && !/^(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)$/.test(candidate)) {
+              name = candidate;
+            }
+          }
         }
 
         let lat = null;
@@ -473,8 +544,9 @@
           lng = parseFloat(last[2]);
         } else {
           const atMatch =
+            decoded.match(/center=(-?\d+\.\d+)(?:,|%2C)(-?\d+\.\d+)/i) ||
             decoded.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) ||
-            decoded.match(/[?&](?:q|ll|center)=(-?\d+\.\d+),(-?\d+\.\d+)/);
+            decoded.match(/[?&](?:q|query|ll|sll|daddr)=(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
           if (atMatch) {
             lat = parseFloat(atMatch[1]);
             lng = parseFloat(atMatch[2]);
@@ -484,7 +556,7 @@
         if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
           return {
             name,
-            address: `구글 지도 링크 정확한 좌표 (${lat.toFixed(5)}, ${lng.toFixed(5)})`,
+            address: textHint || `구글 지도 링크 정확한 좌표 (${lat.toFixed(5)}, ${lng.toFixed(5)})`,
             lat,
             lng,
             spendInfo: estimateGoogleAvgSpend(name, "")
@@ -523,13 +595,33 @@
       });
       const [newCheckText, setNewCheckText] = useState("");
 
-      // ☁️ 실시간 클라우드 동기화 상태
+      // ☁️ 실시간 클라우드 동기화 상태 (couple-calendar-new Supabase 연동)
       const [syncStatus, setSyncStatus] = useState("connecting"); // connecting | synced | saving | offline
       const [lastSyncedTime, setLastSyncedTime] = useState("");
       const isInitialCloudLoadedRef = useRef(false);
       const isApplyingRemoteRef = useRef(false);
-      const lastUpdatedAtRef = useRef(null);
+      const explicitlyClearedRef = useRef(false);
+      const lastUpdatedAtRef = useRef(0);
       const saveTimeoutRef = useRef(null);
+      const latestStateRef = useRef({
+        pins,
+        tripTitle,
+        exchangeRate,
+        peopleCount,
+        notes,
+        checklist
+      });
+
+      useEffect(() => {
+        latestStateRef.current = {
+          pins,
+          tripTitle,
+          exchangeRate,
+          peopleCount,
+          notes,
+          checklist
+        };
+      }, [pins, tripTitle, exchangeRate, peopleCount, notes, checklist]);
 
       // 탭 상태: itinerary(지도&코스) | notepad(대형 메모장) | budget(예산·정산)
       const [activeTab, setActiveTab] = useState("itinerary");
@@ -587,10 +679,24 @@
         }
       }, [theme]);
 
-      // 로컬 저장소 백업 유지
+      // 로컬 저장소 백업 유지 (두 키 모두 동기화하여 버전 간 호환 보장)
       useEffect(() => {
         localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(pins));
-      }, [pins]);
+        try {
+          localStorage.setItem(
+            STORAGE_KEY_MASTER_V6,
+            JSON.stringify({
+              pins,
+              tripTitle,
+              exchangeRate,
+              peopleCount,
+              notes,
+              checklist,
+              updatedAt: lastUpdatedAtRef.current || Date.now()
+            })
+          );
+        } catch (e) {}
+      }, [pins, tripTitle, exchangeRate, peopleCount, notes, checklist]);
       useEffect(() => {
         localStorage.setItem(STORAGE_KEY_TITLE, tripTitle);
       }, [tripTitle]);
@@ -605,65 +711,140 @@
       }, [checklist]);
 
       // =========================================================================
-      // ☁️ 1. 클라우드 서버(/api/sync)에서 최신 데이터 불러오기 & 자동 병합
+      // ☁️ couple-calendar-new 의 Supabase 실시간 동기화 엔진 (WebSocket + REST)
       // =========================================================================
+      const hasLocalMeaningfulData = (stateObj) => {
+        if (!stateObj) return false;
+        if (Array.isArray(stateObj.pins) && stateObj.pins.length > 0) return true;
+        if (
+          Array.isArray(stateObj.notes) &&
+          stateObj.notes.some((n) => n && n.content && n.content.trim().length > 0)
+        ) {
+          return true;
+        }
+        return false;
+      };
+
+      const applyRemotePayload = (remote, isManual = false) => {
+        if (!remote || typeof remote !== "object") return false;
+
+        const remoteUpdatedAt = Number(remote.updatedAt || 0);
+        if (
+          !isManual &&
+          remoteUpdatedAt > 0 &&
+          lastUpdatedAtRef.current > 0 &&
+          remoteUpdatedAt <= lastUpdatedAtRef.current
+        ) {
+          setSyncStatus("synced");
+          return false;
+        }
+
+        const currentLocal = latestStateRef.current;
+        const remotePins = Array.isArray(remote.pins) ? remote.pins : [];
+
+        // 핵심 보호 로직: 만약 클라우드 데이터가 비어 있는데 내 기기(예: 맥북)에 기존 핀이나 메모가 있다면,
+        // 빈 데이터로 덮어쓰지 않고 내 기기의 데이터를 즉시 클라우드로 업로드하여 모든 폰에 전파!
+        if (
+          remotePins.length === 0 &&
+          !remote.explicitlyCleared &&
+          hasLocalMeaningfulData(currentLocal)
+        ) {
+          isInitialCloudLoadedRef.current = true;
+          pushCloudData(
+            {
+              ...currentLocal,
+              forceOverwrite: true
+            },
+            true
+          );
+          return true;
+        }
+
+        isApplyingRemoteRef.current = true;
+        lastUpdatedAtRef.current = remoteUpdatedAt || Date.now();
+
+        if (Array.isArray(remote.pins)) {
+          setPins(remote.pins);
+          if (remote.pins.length > 0) {
+            setSelectedPinId((prevId) =>
+              remote.pins.some((p) => p.id === prevId) ? prevId : remote.pins[0].id
+            );
+          }
+        }
+        if (remote.tripTitle) setTripTitle(remote.tripTitle);
+        if (remote.exchangeRate) setExchangeRate(Number(remote.exchangeRate));
+        if (remote.peopleCount) setPeopleCount(Number(remote.peopleCount));
+        if (Array.isArray(remote.notes) && remote.notes.length > 0) setNotes(remote.notes);
+        if (Array.isArray(remote.checklist) && remote.checklist.length > 0) {
+          setChecklist(remote.checklist);
+        }
+
+        setLastSyncedTime(
+          new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+        );
+        setSyncStatus("synced");
+
+        setTimeout(() => {
+          isApplyingRemoteRef.current = false;
+          isInitialCloudLoadedRef.current = true;
+        }, 350);
+
+        if (isManual) {
+          showToast("☁️ 클라우드에서 최신 여행 일정과 메모를 동기화했습니다!");
+        }
+        return true;
+      };
+
       const fetchCloudData = async (isManual = false) => {
         try {
           if (isManual) setSyncStatus("connecting");
-          const res = await fetch(`/api/sync?t=${Date.now()}`);
-          if (!res.ok) {
-            setSyncStatus("offline");
-            return;
-          }
-          const json = await res.json();
+          let remote = null;
 
-          if (json.exists && json.data) {
-            const remote = json.data;
+          // 1순위: couple-calendar-new 와 동일한 Supabase 직접 조회
+          if (supabaseClient) {
+            const { data: row, error } = await supabaseClient
+              .from("couple_calendar")
+              .select("*")
+              .eq("date", SUPABASE_SYNC_KEY)
+              .maybeSingle();
 
-            // 이미 최신 버전이면 스킵
-            if (!isManual && lastUpdatedAtRef.current && remote.updatedAt === lastUpdatedAtRef.current) {
-              setSyncStatus("synced");
-              return;
-            }
-
-            isApplyingRemoteRef.current = true;
-            lastUpdatedAtRef.current = remote.updatedAt;
-
-            // 만약 클라우드는 비어있는데 내 기기(맥북 등)에 기존 핀이 있다면 내 기기 데이터를 클라우드로 업로드!
-            if ((!remote.pins || remote.pins.length === 0) && pins.length > 0 && !isInitialCloudLoadedRef.current) {
-              isApplyingRemoteRef.current = false;
-              isInitialCloudLoadedRef.current = true;
-              await pushCloudData({ pins, tripTitle, exchangeRate, peopleCount, notes, checklist });
-              return;
-            }
-
-            if (Array.isArray(remote.pins)) {
-              setPins(remote.pins);
-              if (remote.pins.length > 0 && !selectedPinId) {
-                setSelectedPinId(remote.pins[0].id);
+            if (!error && row) {
+              if (row.hae_shift && typeof row.hae_shift === "object") {
+                remote = row.hae_shift;
+              } else if (row.hae_memo && typeof row.hae_memo === "string") {
+                try {
+                  remote = JSON.parse(row.hae_memo);
+                } catch (e) {}
               }
             }
-            if (remote.tripTitle) setTripTitle(remote.tripTitle);
-            if (remote.exchangeRate) setExchangeRate(Number(remote.exchangeRate));
-            if (remote.peopleCount) setPeopleCount(Number(remote.peopleCount));
-            if (Array.isArray(remote.notes) && remote.notes.length > 0) setNotes(remote.notes);
-            if (Array.isArray(remote.checklist)) setChecklist(remote.checklist);
+          }
 
-            setLastSyncedTime(new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
-            setSyncStatus("synced");
-
-            setTimeout(() => {
-              isApplyingRemoteRef.current = false;
-              isInitialCloudLoadedRef.current = true;
-            }, 300);
-
-            if (isManual) {
-              showToast("☁️ 클라우드에서 최신 여행 일정과 메모를 동기화했습니다!");
+          // 2순위: /api/sync 서버리스 엔드포인트 조회
+          if (!remote) {
+            const res = await fetch(`/api/sync?t=${Date.now()}`, { cache: "no-store" });
+            if (res.ok) {
+              const json = await res.json();
+              const candidate = json && json.data ? json.data : json;
+              if (candidate && !candidate.empty) {
+                remote = candidate;
+              }
             }
-          } else {
-            // 클라우드에 아직 파일이 없으면 현재 기기의 데이터를 첫 기준점으로 즉시 업로드
+          }
+
+          if (remote && !remote.empty) {
+            applyRemotePayload(remote, isManual);
             isInitialCloudLoadedRef.current = true;
-            await pushCloudData({ pins, tripTitle, exchangeRate, peopleCount, notes, checklist });
+          } else {
+            // 클라우드에 아직 데이터가 없는 경우: 내 기기(맥북 등)에 데이터가 있을 때만 첫 기준점으로 업로드!
+            // (빈 핸드폰이 먼저 접속했을 때 빈 배열을 업로드하지 않도록 방지)
+            isInitialCloudLoadedRef.current = true;
+            const currentLocal = latestStateRef.current;
+            if (hasLocalMeaningfulData(currentLocal)) {
+              await pushCloudData({ ...currentLocal, forceOverwrite: true }, true);
+              showToast("☁️ 기기에 저장되어 있던 일정을 클라우드에 자동 업로드했습니다!");
+            } else {
+              setSyncStatus("synced");
+            }
           }
         } catch (e) {
           setSyncStatus("offline");
@@ -671,20 +852,75 @@
         }
       };
 
-      // ☁️ 2. 변경 사항을 클라우드 서버(/api/sync)에 저장하기
-      const pushCloudData = async (payload) => {
+      // ☁️ 2. 변경 사항을 Supabase (couple_calendar) 및 /api/sync 에 즉시 저장
+      const pushCloudData = async (customPayload, isForce = false) => {
         try {
-          setSyncStatus("saving");
-          const res = await fetch("/api/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
-          if (res.ok) {
-            const json = await res.json();
-            if (json.updatedAt) lastUpdatedAtRef.current = json.updatedAt;
-            setLastSyncedTime(new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
+          const base = customPayload || latestStateRef.current;
+          const pinsList = Array.isArray(base.pins) ? base.pins : [];
+
+          // 빈 기기가 실수로 클라우드를 덮어쓰지 않도록 보호
+          if (
+            pinsList.length === 0 &&
+            !explicitlyClearedRef.current &&
+            !isForce &&
+            !base.forceOverwrite &&
+            !hasLocalMeaningfulData(base)
+          ) {
             setSyncStatus("synced");
+            return;
+          }
+
+          setSyncStatus("saving");
+          const nowTs = Date.now();
+          lastUpdatedAtRef.current = nowTs;
+
+          const payload = {
+            pins: pinsList,
+            tripTitle: base.tripTitle || "우리의 일본 여행 ✈️",
+            exchangeRate: Number(base.exchangeRate) || 9.05,
+            peopleCount: Number(base.peopleCount) || 2,
+            notes: Array.isArray(base.notes) ? base.notes : DEFAULT_NOTE_PAD,
+            checklist: Array.isArray(base.checklist) ? base.checklist : [],
+            explicitlyCleared: Boolean(explicitlyClearedRef.current || base.explicitlyCleared),
+            forceOverwrite: Boolean(isForce || base.forceOverwrite),
+            updatedAt: nowTs,
+            clientId: CLIENT_ID
+          };
+
+          let savedOk = false;
+
+          // 1순위: couple-calendar-new 와 동일한 Supabase 직접 Upsert (실시간 WebSocket 트리거)
+          if (supabaseClient) {
+            const { error } = await supabaseClient.from("couple_calendar").upsert(
+              {
+                date: SUPABASE_SYNC_KEY,
+                memo: "",
+                hae_shift: payload,
+                hae_memo: JSON.stringify(payload)
+              },
+              { onConflict: "date" }
+            );
+            if (!error) savedOk = true;
+          }
+
+          // 2순위: /api/sync 백업 저장
+          try {
+            const res = await fetch("/api/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            if (res.ok) savedOk = true;
+          } catch (apiErr) {}
+
+          if (savedOk) {
+            setLastSyncedTime(
+              new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+            );
+            setSyncStatus("synced");
+            if (isForce) {
+              showToast("☁️ 현재 기기의 일정을 클라우드에 강제 동기화했습니다!");
+            }
           } else {
             setSyncStatus("offline");
           }
@@ -693,23 +929,63 @@
         }
       };
 
-      // 첫 실행 시 클라우드 불러오기 + 12초마다 백그라운드 자동 동기화 (여자친구 폰 실시간 반영)
+      // 첫 실행 시 불러오기 + Supabase 실시간 WebSocket 구독 (couple-calendar-new 방식) + 포커스/백그라운드 동기화
       useEffect(() => {
         fetchCloudData(false);
+
+        let channel = null;
+        if (supabaseClient) {
+          channel = supabaseClient
+            .channel("public:couple_calendar:japan_travel_635")
+            .on(
+              "postgres_changes",
+              { event: "*", schema: "public", table: "couple_calendar" },
+              (payload) => {
+                if (payload.new && payload.new.date === SUPABASE_SYNC_KEY) {
+                  let remote = payload.new.hae_shift;
+                  if (!remote && payload.new.hae_memo) {
+                    try {
+                      remote = JSON.parse(payload.new.hae_memo);
+                    } catch (e) {}
+                  }
+                  if (remote && remote.clientId !== CLIENT_ID) {
+                    applyRemotePayload(remote, false);
+                  }
+                }
+              }
+            )
+            .subscribe();
+        }
+
         const timer = setInterval(() => {
-          if (!isApplyingRemoteRef.current && syncStatus !== "saving") {
+          if (!isApplyingRemoteRef.current) {
             fetchCloudData(false);
           }
-        }, 12000);
-        return () => clearInterval(timer);
+        }, 4000);
+
+        const handleFocusOrVisible = () => {
+          if (document.visibilityState === "visible" && !isApplyingRemoteRef.current) {
+            fetchCloudData(false);
+          }
+        };
+        window.addEventListener("focus", handleFocusOrVisible);
+        document.addEventListener("visibilitychange", handleFocusOrVisible);
+
+        return () => {
+          clearInterval(timer);
+          window.removeEventListener("focus", handleFocusOrVisible);
+          document.removeEventListener("visibilitychange", handleFocusOrVisible);
+          if (channel && supabaseClient) {
+            supabaseClient.removeChannel(channel);
+          }
+        };
       }, []);
 
-      // 내 기기에서 핀/제목/환율/메모장/체크리스트 수정 시 1초 뒤 클라우드 자동 저장
+      // 내 기기에서 핀/제목/환율/메모장/체크리스트 수정 시 0.4초 뒤 클라우드 실시간 저장
       useEffect(() => {
         if (!isInitialCloudLoadedRef.current || isApplyingRemoteRef.current) return;
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
-        setSyncStatus("saving");
         saveTimeoutRef.current = setTimeout(() => {
           pushCloudData({
             pins,
@@ -719,7 +995,7 @@
             notes,
             checklist
           });
-        }, 1000);
+        }, 400);
 
         return () => {
           if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -1253,10 +1529,9 @@
         };
       };
 
-      // 🔍 구글 지도 링크 해독 & 다국어(한/일/영) 검색 목록
-      const handleSearchPlacesAndLinks = async (e) => {
-        e.preventDefault();
-        const query = searchKeyword.trim();
+      // 🔍 구글 지도 링크(모바일 앱 공유 maps.app.goo.gl 포함) 해독 & 다국어(한/일/영) 검색 목록
+      const executePlaceSearch = async (rawQueryInput) => {
+        const query = (rawQueryInput ?? searchKeyword).trim();
         if (!query) return;
 
         setIsSearching(true);
@@ -1264,9 +1539,12 @@
         setTranslatedInfo(null);
 
         try {
+          const { cleanUrl, textHint } = extractUrlAndHintFromInput(query);
           const isUrl =
+            Boolean(cleanUrl) ||
             query.startsWith("http://") ||
             query.startsWith("https://") ||
+            query.includes("maps.app") ||
             query.includes("google.") ||
             query.includes("goo.gl") ||
             query.includes("/maps/");
@@ -1276,25 +1554,85 @@
             if (clientParsed) {
               setSearchResults([clientParsed]);
               setIsSearching(false);
+              showToast("📍 구글맵 링크 좌표를 즉시 확인했습니다! [＋ 선택]을 눌러 추가하세요.");
               return;
             }
           }
 
           try {
+            const targetUrlParam = cleanUrl || query;
             const apiParam = isUrl
-              ? `url=${encodeURIComponent(query)}`
+              ? `url=${encodeURIComponent(targetUrlParam)}&hint=${encodeURIComponent(textHint || "")}`
               : `q=${encodeURIComponent(query)}`;
             const apiRes = await fetch(`/api/resolve?${apiParam}`);
             if (apiRes.ok) {
               const apiData = await apiRes.json();
-              if (apiData.translated) setTranslatedInfo(apiData.translated);
+              if (apiData.translated) {
+                setTranslatedInfo({
+                  original: apiData.originalQuery || textHint || query,
+                  ja: apiData.translated.ja,
+                  en: apiData.translated.en
+                });
+              }
+
+              // 모바일 구글맵 단축 링크(maps.app.goo.gl)에서 좌표가 바로 해독된 경우!
+              if (
+                apiData.resolved &&
+                apiData.lat !== undefined &&
+                apiData.lat !== null &&
+                apiData.lng !== undefined &&
+                apiData.lng !== null
+              ) {
+                const resolvedTitle = apiData.name || textHint || "구글맵 공유 장소";
+                const primaryItem = {
+                  name: resolvedTitle,
+                  address: apiData.address || targetUrlParam,
+                  lat: Number(apiData.lat),
+                  lng: Number(apiData.lng),
+                  spendInfo: estimateGoogleAvgSpend(resolvedTitle, customCategory)
+                };
+                const extraItems = Array.isArray(apiData.results)
+                  ? apiData.results
+                      .filter(
+                        (r) =>
+                          Math.abs(Number(r.lat) - primaryItem.lat) > 0.0005 ||
+                          Math.abs(Number(r.lng) - primaryItem.lng) > 0.0005
+                      )
+                      .map((r) => ({
+                        ...r,
+                        lat: Number(r.lat),
+                        lng: Number(r.lng),
+                        spendInfo: estimateGoogleAvgSpend(r.name, customCategory)
+                      }))
+                  : [];
+                setSearchResults([primaryItem, ...extraItems]);
+                setIsSearching(false);
+                showToast(`📍 '${resolvedTitle}' 위치를 찾았습니다! [＋ 선택]을 눌러주세요.`);
+                return;
+              }
+
               if (apiData.results && apiData.results.length > 0) {
-                setSearchResults(apiData.results);
+                setSearchResults(
+                  apiData.results.map((r) => ({
+                    ...r,
+                    lat: Number(r.lat),
+                    lng: Number(r.lng),
+                    spendInfo: r.spendInfo || estimateGoogleAvgSpend(r.name, customCategory)
+                  }))
+                );
                 setIsSearching(false);
                 return;
               }
             }
           } catch (err) {}
+
+          // 만약 URL이었는데 서버 리다이렉트 추적이 실패했고 힌트 텍스트(가게 이름)도 없다면 URL 자체를 지오코더에 넣지 않음
+          const fallbackKeyword = isUrl ? textHint : query;
+          if (!fallbackKeyword || fallbackKeyword.startsWith("http")) {
+            showToast("⚠️ 단축 링크에서 좌표를 찾지 못했습니다. 장소 이름으로 검색해보세요!");
+            setIsSearching(false);
+            return;
+          }
 
           const translateDirect = async (text, tl) => {
             try {
@@ -1311,17 +1649,19 @@
           };
 
           const [jaKw, enKw] = await Promise.all([
-            translateDirect(query, "ja"),
-            translateDirect(query, "en")
+            translateDirect(fallbackKeyword, "ja"),
+            translateDirect(fallbackKeyword, "en")
           ]);
-          setTranslatedInfo({ original: query, ja: jaKw, en: enKw });
+          setTranslatedInfo({ original: fallbackKeyword, ja: jaKw, en: enKw });
 
           const extra = [];
           if (enKw.toLowerCase().startsWith("hotel ")) {
             extra.push(enKw.replace(/^hotel\s+/i, "") + " Hotel");
           }
 
-          const keywords = Array.from(new Set([query, jaKw, enKw, ...extra].filter(Boolean)));
+          const keywords = Array.from(
+            new Set([fallbackKeyword, jaKw, enKw, ...extra].filter(Boolean))
+          );
           const directList = [];
 
           await Promise.all(
@@ -1415,7 +1755,31 @@
         }
       };
 
+      const handleSearchPlacesAndLinks = async (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        await executePlaceSearch(searchKeyword);
+      };
+
+      const handlePasteFromClipboard = async () => {
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.readText) {
+            showToast("입력창을 길게 눌러 '붙여넣기'를 해주세요!");
+            return;
+          }
+          const text = await navigator.clipboard.readText();
+          if (text && text.trim()) {
+            setSearchKeyword(text.trim());
+            await executePlaceSearch(text.trim());
+          } else {
+            showToast("클립보드에 복사된 텍스트나 구글맵 링크가 없습니다.");
+          }
+        } catch (err) {
+          showToast("입력창을 길게 눌러 복사한 링크를 붙여넣어 주세요!");
+        }
+      };
+
       const addPinToMap = ({ name, category, address, lat, lng, spendInfo }) => {
+        explicitlyClearedRef.current = false;
         const finalCategory = category || customCategory;
         const computedSpend = spendInfo || estimateGoogleAvgSpend(name, finalCategory);
 
@@ -1433,7 +1797,17 @@
           items: []
         };
 
-        setPins((prev) => [...prev, newPin]);
+        setPins((prev) => {
+          const nextPins = [...prev, newPin];
+          pushCloudData(
+            {
+              ...latestStateRef.current,
+              pins: nextPins
+            },
+            false
+          );
+          return nextPins;
+        });
         setSelectedPinId(newPin.id);
         setShowAddModal(false);
         setSearchKeyword("");
@@ -1442,7 +1816,7 @@
         if (mapInstanceRef.current) {
           mapInstanceRef.current.flyTo([newPin.lat, newPin.lng], 16, { duration: 0.9 });
         }
-        showToast(`📍 '${newPin.name}' 추가 및 클라우드 동기화 완료!`);
+        showToast(`📍 '${newPin.name}' 추가 및 클라우드 실시간 동기화 완료!`);
       };
 
       const handleMovePinOrder = (index, direction) => {
@@ -2709,7 +3083,19 @@
                         type="text"
                         value={searchKeyword}
                         onChange={(e) => setSearchKeyword(e.target.value)}
-                        placeholder="구글맵 링크 붙여넣기 또는 한글/일어/영어 검색"
+                        onPaste={(e) => {
+                          const pasted = e.clipboardData?.getData("text");
+                          if (
+                            pasted &&
+                            (pasted.includes("http") ||
+                              pasted.includes("maps.app") ||
+                              pasted.includes("goo.gl") ||
+                              pasted.includes("google."))
+                          ) {
+                            setTimeout(() => executePlaceSearch(pasted), 60);
+                          }
+                        }}
+                        placeholder="구글맵 공유 링크 붙여넣기 또는 한글/일어/영어 검색"
                         className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-white"
                       />
                       <button
@@ -2717,9 +3103,19 @@
                         disabled={isSearching}
                         className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shrink-0"
                       >
-                        {isSearching ? "검색중..." : "🔍 검색"}
+                        {isSearching ? "분석중..." : "🔍 검색"}
                       </button>
                     </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={handlePasteFromClipboard}
+                      className="w-full py-2 px-3 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-400 text-xs font-extrabold flex items-center justify-center gap-1.5 transition"
+                    >
+                      <span>📋 핸드폰 구글맵 앱에서 '공유 → 복사'한 링크 원터치 붙여넣기</span>
+                    </button>
                   </div>
 
                   {translatedInfo && (
@@ -2817,13 +3213,39 @@
 
                 <button
                   onClick={() => {
+                    pushCloudData(
+                      {
+                        pins,
+                        tripTitle,
+                        exchangeRate,
+                        peopleCount,
+                        notes,
+                        checklist,
+                        forceOverwrite: true
+                      },
+                      true
+                    );
+                    setShowResetModal(false);
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-left"
+                >
+                  <div className="text-xs font-extrabold text-amber-300">
+                    📤 이 기기(맥북/폰)의 현재 일정을 클라우드로 강제 전송
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    현재 화면에 보이는 코스와 메모를 모든 핸드폰과 PC에 즉시 똑같이 적용합니다.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => {
                     fetchCloudData(true);
                     setShowResetModal(false);
                   }}
                   className="w-full p-3.5 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 text-left"
                 >
                   <div className="text-xs font-extrabold text-indigo-400">
-                    ☁️ 지금 즉시 클라우드 최신 데이터 불러오기
+                    📥 지금 즉시 클라우드 최신 데이터 불러오기
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5">
                     여자친구 폰이나 맥북에서 방금 수정한 내용을 즉시 가져옵니다.
@@ -2869,10 +3291,24 @@
 
                 <button
                   onClick={() => {
+                    explicitlyClearedRef.current = true;
                     setPins([]);
                     setSelectedPinId(null);
                     setLastCompletedSegment(null);
                     setShowResetModal(false);
+                    pushCloudData(
+                      {
+                        pins: [],
+                        tripTitle,
+                        exchangeRate,
+                        peopleCount,
+                        notes,
+                        checklist,
+                        explicitlyCleared: true,
+                        forceOverwrite: true
+                      },
+                      true
+                    );
                     showToast("🗑️ 모든 핀이 비워졌습니다.");
                   }}
                   className="w-full p-3 rounded-2xl bg-rose-600/20 border border-rose-500/40 text-left text-xs font-extrabold text-rose-400"
