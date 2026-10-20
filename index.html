@@ -67,14 +67,66 @@
     .theme-light .bg-indigo-950\/60,
     .theme-light .bg-indigo-950\/35,
     .theme-light .bg-indigo-950\/40 { background-color: #eef2ff !important; }
-    .theme-light .from-indigo-950\/60 { --tw-gradient-from: #eef2ff !important; }
-    .theme-light .to-slate-900 { --tw-gradient-to: #ffffff !important; }
-    .theme-light .from-emerald-950\/60 { --tw-gradient-from: #ecfdf5 !important; }
-    .theme-light .via-slate-900 { --tw-gradient-via: #ffffff !important; }
-    .theme-light .to-indigo-950\/60 { --tw-gradient-to: #eef2ff !important; }
 
     /* 버튼 내부 흰색 글씨는 라이트 모드에서도 그대로 유지 */
     .theme-light .keep-white { color: #ffffff !important; }
+
+    /* 📊 우측 상세 패널 상단 헤더 */
+    .detail-header-card {
+      background: linear-gradient(135deg, rgba(30, 27, 75, 0.6) 0%, #0f172a 100%);
+    }
+    .theme-light .detail-header-card {
+      background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%) !important;
+      border-color: #e2e8f0 !important;
+    }
+
+    /* 📊 구글 맵 방문객 지출 안내 카드 (어둡거나 탁한 은색/회색을 없애고 선명한 가시성 제공) */
+    .google-avg-spend-box {
+      background: linear-gradient(135deg, rgba(6, 78, 59, 0.5) 0%, rgba(15, 23, 42, 0.95) 50%, rgba(49, 46, 129, 0.5) 100%);
+      border: 1.5px solid rgba(52, 211, 153, 0.4);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+    .google-avg-spend-box .spend-tag {
+      background-color: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+    }
+    .google-avg-spend-box .spend-price {
+      color: #fcd34d;
+    }
+    .google-avg-spend-box .spend-desc {
+      color: #e2e8f0;
+    }
+    .google-avg-spend-box .spend-desc b {
+      color: #ffffff;
+    }
+
+    /* ☀️ 라이트 모드: 화사하고 선명한 민트/에메랄드/화이트 프리미엄 카드 */
+    .theme-light .google-avg-spend-box {
+      background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 50%, #f0fdfa 100%) !important;
+      border: 1.5px solid #10b981 !important;
+      box-shadow: 0 6px 20px -2px rgba(16, 185, 129, 0.18), 0 2px 8px -1px rgba(16, 185, 129, 0.1) !important;
+    }
+    .theme-light .google-avg-spend-box .spend-tag {
+      background-color: #d1fae5 !important;
+      color: #065f46 !important;
+      border: 1px solid #6ee7b7 !important;
+      font-weight: 800 !important;
+    }
+    .theme-light .google-avg-spend-box .spend-price {
+      color: #b45309 !important;
+      font-weight: 900 !important;
+      font-size: 13px !important;
+    }
+    .theme-light .google-avg-spend-box .spend-desc {
+      color: #334155 !important;
+      font-size: 12px !important;
+      font-weight: 600 !important;
+    }
+    .theme-light .google-avg-spend-box .spend-desc b {
+      color: #0f172a !important;
+      font-weight: 900 !important;
+    }
 
     .custom-pin {
       display: flex;
@@ -1995,9 +2047,6 @@
                       {syncStatus === "offline" && <span>🔄 동기화 재시도</span>}
                     </button>
                   </div>
-                  <p className="hidden sm:block text-[11px] text-slate-400 mt-0.5">
-                    ☁️맥북·내폰·여자친구폰 실시간 공유 · ☀️밝은/어두운 화면 · 📝대형 자유 메모장
-                  </p>
                 </div>
               </div>
 
@@ -2440,7 +2489,7 @@
             >
               {selectedPin ? (
                 <>
-                  <div className="p-4 border-b border-slate-800 bg-gradient-to-br from-indigo-950/60 to-slate-900">
+                  <div className="p-4 border-b border-slate-800 detail-header-card">
                     {editingPinId === selectedPin.id ? (
                       <div className="space-y-2">
                         <select
@@ -2532,28 +2581,29 @@
 
                   <div className="flex-1 overflow-y-auto p-4 space-y-4">
                     {selectedPinAvgSpend && (
-                      <div className="p-3.5 rounded-2xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-indigo-950/60 border border-emerald-500/40 space-y-2">
+                      <div className="google-avg-spend-box p-3.5 rounded-2xl space-y-2.5 transition">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-extrabold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full">
-                            📊 구글 맵 방문객 지출 이력 안내
+                          <span className="spend-tag text-[11px] font-extrabold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                            <span>📊</span>
+                            <span>구글 맵 방문객 지출 이력 안내</span>
                           </span>
-                          <span className="text-xs font-black text-amber-300">
+                          <span className="spend-price text-xs font-black">
                             {selectedPinAvgSpend.label}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-200 leading-relaxed">
+                        <p className="spend-desc text-xs leading-relaxed">
                           이 장소에서는 <b>1인당 평균적으로 {formatJPY(selectedPinAvgSpend.avgYen)} (약 {formatKRW(selectedPinAvgSpend.avgYen * exchangeRate)})</b>의 금액이 사용된 이력이 있습니다.
                         </p>
-                        <div className="flex gap-1.5 pt-1">
+                        <div className="flex gap-1.5 pt-0.5">
                           <button
                             onClick={() => handleApplyGoogleAvgSpend(selectedPin, 1)}
-                            className="flex-1 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition"
+                            className="flex-1 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 keep-white font-extrabold text-xs shadow-sm transition active:scale-[0.98]"
                           >
                             ＋ 1인 평균({formatJPY(selectedPinAvgSpend.avgYen)}) 담기
                           </button>
                           <button
                             onClick={() => handleApplyGoogleAvgSpend(selectedPin, peopleCount)}
-                            className="flex-1 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs transition"
+                            className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shadow-sm transition active:scale-[0.98]"
                           >
                             ＋ {peopleCount}인({formatJPY(selectedPinAvgSpend.avgYen * peopleCount)}) 담기
                           </button>
