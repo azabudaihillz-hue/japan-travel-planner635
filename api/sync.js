@@ -165,9 +165,22 @@ function ensureSecurityConfig(existingObj) {
     }
   }
 
+  const now = Date.now();
+  const inviteTickets = Array.isArray(base.inviteTickets)
+    ? base.inviteTickets.filter(
+        (t) =>
+          t &&
+          typeof t === "object" &&
+          typeof t.ticket === "string" &&
+          t.ticket.length >= 32 &&
+          Number(t.expiresAt || 0) > now
+      )
+    : [];
+
   return {
     accessEntries,
     ipRecords,
+    inviteTickets,
   };
 }
 
@@ -175,6 +188,15 @@ function verifyAccessPassword(candidate, securityConfig) {
   if (typeof candidate !== "string") return false;
   const trimmed = candidate.trim();
   if (!trimmed) return false;
+
+  // 1) 동적 난수 티켓 인증 (비밀번호 노출 없는 일회성/기간제 난수 토큰)
+  const cleanTicket = trimmed.startsWith("ticket:") ? trimmed.slice(7).trim() : trimmed;
+  if (cleanTicket.length >= 32) {
+    const validTicket = (securityConfig?.inviteTickets || []).find(
+      (t) => t.ticket === cleanTicket && Number(t.expiresAt || 0) > Date.now()
+    );
+    if (validTicket) return true;
+  }
 
   const entries = Array.isArray(securityConfig?.accessEntries)
     ? securityConfig.accessEntries
@@ -764,7 +786,68 @@ module.exports = async function handler(req, res) {
       );
 
       // -----------------------------------------------------------------------
-      // 🔑 시작 페이지 입장 비밀번호 검증 요청 (action === "authenticateEntry")
+      // 🎲 1) 동적 난수 초대 티켓 생성 요청 (action === "generateInviteTicket")
+      //    - 비밀번호를 외부에 노출하지 않고 매번 새로운 난수 토큰 링크 생성
+      // -----------------------------------------------------------------------
+      if (action === "generateInviteTicket") {
+        if (!verifyAccessPassword(providedPin, securityConfig) && !verifyAdminMasterKey(body.adminKey)) {
+          return res.status(401).json({ ok: false, error: "인증 권한이 없습니다." });
+        }
+        const ticket = crypto.randomBytes(24).toString("hex");
+        const newTicket = {
+          ticket,
+          label: cleanString(body.label || "동행인 초대 티켓", 60, "초대 링크"),
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 14 * 24 * 60 * 60 * 1000, // 14일 유효
+        };
+        securityConfig.inviteTickets = [
+          newTicket,
+          ...(securityConfig.inviteTickets || []).filter((t) => (t.expiresAt || 0) > Date.now()).slice(0, 49)
+        ];
+        await persistSecurityConfigOnly(existing, securityConfig);
+        return res.status(200).json({ ok: true, ticket });
+      }
+
+      // -----------------------------------------------------------------------
+      // 🎫 2) 동적 난수 초대 티켓 수락/인증 요청 (action === "redeemInviteTicket")
+      // -----------------------------------------------------------------------
+      if (action === "redeemInviteTicket") {
+        const ticketCandidate = cleanString(body.ticket || "", 64, "");
+        const matched = (securityConfig.inviteTickets || []).find(
+          (t) => t.ticket === ticketCandidate && Number(t.expiresAt || 0) > Date.now()
+        );
+        if (matched) {
+          resetIpFailure(clientIp, securityConfig);
+          await persistSecurityConfigOnly(existing, securityConfig);
+          return res.status(200).json({
+            ok: true,
+            authenticated: true,
+            ticket: ticketCandidate,
+            clientIp,
+            cloudData: stripSensitiveFieldsForClient(existing),
+          });
+        }
+
+        const updatedIp = registerIpFailure(clientIp, securityConfig);
+        await persistSecurityConfigOnly(existing, securityConfig);
+        if (updatedIp.banned) {
+          return res.status(403).json({
+            ok: false,
+            ipBanned: true,
+            clientIp,
+            remainingAttempts: 0,
+            error: `🚫 초대 링크 오류 ${MAX_PIN_FAILS}회로 현재 IP(${clientIp})가 자동 차단되었습니다.`,
+          });
+        }
+        return res.status(401).json({
+          ok: false,
+          error: "유효하지 않거나 만료된 초대 링크입니다.",
+          remainingAttempts: Math.max(0, MAX_PIN_FAILS - updatedIp.fails),
+        });
+      }
+
+      // -----------------------------------------------------------------------
+      // 🔑 3) 시작 페이지 입장 비밀번호 검증 요청 (action === "authenticateEntry")
       // -----------------------------------------------------------------------
       if (action === "authenticateEntry") {
         // 만약 시작 페이지 입력칸에 관리자 전용 마스터 키를 바로 입력한 경우 → 관리자 페이지 즉시 오픈 + 입장 허용!

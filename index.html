@@ -920,6 +920,7 @@
       const [isBiometricSaved, setIsBiometricSaved] = useState(
         () => localStorage.getItem(STORAGE_KEY_BIOMETRIC_SAVED) === "true"
       );
+      const [enableBiometricAfterLogin, setEnableBiometricAfterLogin] = useState(true);
 
       useEffect(() => {
         if (
@@ -1285,6 +1286,13 @@
             } else {
               showToast("🔓 비밀번호 인증 완료! 환영합니다.");
             }
+
+            // 기기 생체인증 지원 시 등록 유도
+            if (enableBiometricAfterLogin && window.PublicKeyCredential && !isBiometricSaved) {
+              setTimeout(() => {
+                handleRegisterBiometric();
+              }, 600);
+            }
           } else {
             if (data.ipBanned || res.status === 403) {
               setIsIpBanned(true);
@@ -1513,13 +1521,103 @@
         }
       };
 
-      // 첫 실행 시: 1) URL 원클릭 패스키 자동 감지 -> 2) 저장된 기기 인증 확인 -> 3) 실시간 폴링 동기화
+      // 🎲 지속적 난수 초대 티켓 생성 (비밀번호 노출 0% Opaque Random Token)
+      const handleGenerateInviteTicket = async () => {
+        try {
+          showToast("🎲 보안 난수 초대 링크 생성 중...");
+          const res = await fetch("/api/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": CSRF_HEADER_VALUE,
+              "X-Planner-Pin": savedAuthPinRef.current || ""
+            },
+            body: JSON.stringify({
+              action: "generateInviteTicket",
+              adminKey: verifiedAdminKey || "",
+              label: "동행인 초대 링크"
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ticket) {
+            const shareUrl = `${window.location.origin}${window.location.pathname}#invite=${data.ticket}`;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(shareUrl);
+              showToast("📋 매번 새롭게 생성되는 난수 보안 초대 링크가 복사되었습니다!");
+            } else {
+              window.prompt("아래 보안 초대 링크를 복사하여 공유하세요:", shareUrl);
+            }
+          } else {
+            showToast("⚠️ 초대 링크 생성에 실패했습니다.");
+          }
+        } catch {
+          showToast("⚠️ 네트워크 오류로 초대 링크를 생성하지 못했습니다.");
+        }
+      };
+
+      // 🎫 난수 초대 티켓 자동 수락 및 로그인
+      const handleRedeemInviteTicket = async (ticket) => {
+        setIsEntryChecking(true);
+        try {
+          const res = await fetch("/api/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": CSRF_HEADER_VALUE
+            },
+            body: JSON.stringify({
+              action: "redeemInviteTicket",
+              ticket
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.authenticated) {
+            const sessionPin = `ticket:${ticket}`;
+            setSavedAuthPin(sessionPin);
+            savedAuthPinRef.current = sessionPin;
+            setIsEntryAuthenticated(true);
+            setIsEntryChecking(false);
+            if (data.cloudData && !data.cloudData.empty) {
+              applyRemotePayload(data.cloudData, false);
+            }
+            isInitialCloudLoadedRef.current = true;
+            showToast("✨ 보안 초대 링크로 접속되었습니다! (이 기기는 영구 자동 로그인됩니다)");
+
+            // 기기 생체인증 지원 시 등록 유도
+            if (window.PublicKeyCredential && !isBiometricSaved) {
+              setTimeout(() => {
+                handleRegisterBiometric();
+              }, 600);
+            }
+          } else {
+            setIsEntryChecking(false);
+            setEntryErrorMsg(data.error || "유효하지 않거나 만료된 초대 링크입니다.");
+          }
+        } catch {
+          setIsEntryChecking(false);
+          setEntryErrorMsg("⚠️ 초대 링크 확인 중 네트워크 오류가 발생했습니다.");
+        }
+      };
+
+      // 첫 실행 시: 1) URL 난수 초대 티켓/원클릭 패스키 자동 감지 -> 2) 저장된 기기 인증 확인 -> 3) 실시간 폴링 동기화
       useEffect(() => {
-        // 🚀 URL에서 원클릭 프리패스 키(?auth=... 또는 #auth=...) 자동 감지 및 자동 로그인
+        // 🚀 URL에서 지속 난수 초대 티켓(#invite=... 또는 ?invite=...) 자동 감지 및 자동 로그인
         try {
           const urlParams = new URLSearchParams(window.location.search);
           const hashStr = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
           const hashParams = new URLSearchParams(hashStr);
+
+          const incomingTicket =
+            urlParams.get("invite") ||
+            urlParams.get("ticket") ||
+            hashParams.get("invite") ||
+            hashParams.get("ticket");
+
+          if (incomingTicket) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+            handleRedeemInviteTicket(incomingTicket);
+            return;
+          }
 
           const incomingPass =
             urlParams.get("auth") ||
@@ -2633,39 +2731,27 @@
                 </div>
               )}
 
-              {/* 🚀 원클릭 카톡 프리패스 초대 링크 (비밀번호 타이핑 불필요) */}
+              {/* 🎲 원클릭 난수 초대 링크 (비밀번호 은닉 및 매번 다른 난수 발생) */}
               <div className="p-4 rounded-2xl bg-gradient-to-r from-pink-500/15 to-indigo-500/15 border border-pink-400/40 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-black text-white flex items-center gap-1.5">
-                    <span>📲</span>
-                    <span>원클릭 카톡 프리패스 링크</span>
+                    <span>🎲</span>
+                    <span>원클릭 난수 보안 초대 링크</span>
                   </div>
                   <span className="text-[10px] font-bold text-pink-300 bg-pink-500/20 px-2 py-0.5 rounded-full">
-                    비번 입력 0초 통과
+                    비밀번호 노출 0%
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed">
-                  이 링크를 카톡으로 나 자신이나 여자친구에게 보내면, <b>비밀번호를 일일이 칠 필요 없이 누르는 즉시 자동으로 로그인</b>되고 주소창에서 암호 흔적도 깔끔하게 자동 삭제됩니다!
+                  복사할 때마다 예측 불가능한 새로운 보안 난수 토큰이 생성됩니다. 동행인·참여자에게 링크를 공유하면 <b>비밀번호를 몰라도 누르는 즉시 자동으로 안전하게 접속</b>되며, 링크를 통해 실제 비밀번호를 유추할 수 없습니다.
                 </p>
                 <button
                   type="button"
-                  onClick={() => {
-                    const activePw = savedAuthPinRef.current || (adminAccessEntries[0] ? adminAccessEntries[0].id : "K7@mQ2#v");
-                    const shareUrl = `${window.location.origin}${window.location.pathname}#auth=${encodeURIComponent(savedAuthPinRef.current || "K7@mQ2#v")}`;
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                      navigator.clipboard.writeText(shareUrl).then(() => {
-                        showToast("📋 원클릭 카톡 프리패스 링크가 복사되었습니다! 카톡에 붙여넣어 보내세요.");
-                      }).catch(() => {
-                        window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
-                      });
-                    } else {
-                      window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
-                    }
-                  }}
+                  onClick={handleGenerateInviteTicket}
                   className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-500 to-indigo-600 hover:opacity-95 keep-white text-xs font-black shadow-lg transition flex items-center justify-center gap-1.5"
                 >
                   <span>📋</span>
-                  <span>여자친구 / 내 폰 카톡 전송용 프리패스 링크 복사</span>
+                  <span>동행인 / 참여자 전송용 난수 보안 초대 링크 복사</span>
                 </button>
               </div>
 
@@ -2676,7 +2762,7 @@
                   <span className="text-[10px] text-emerald-400 font-bold">PBKDF2 암호화</span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  여기서 지정한 비밀번호를 입력한 사람만 플래너 페이지가 열립니다. 기존 비밀번호를 완전히 바꾸거나, 여자친구·지인용 비밀번호를 여러 개 추가할 수도 있습니다.
+                  여기서 지정한 비밀번호를 입력한 사람만 플래너 페이지가 열립니다. 기존 비밀번호를 완전히 바꾸거나, 동행인·참여자별 비밀번호를 여러 개 추가할 수도 있습니다.
                 </p>
                 <div className="space-y-2">
                   <input
@@ -2684,7 +2770,7 @@
                     spellCheck={false}
                     value={adminNewPasswordLabel}
                     onChange={(e) => setAdminNewPasswordLabel(e.target.value)}
-                    placeholder="비밀번호 메모/별칭 (예: 기본 비번, 여자친구용 등 - 선택)"
+                    placeholder="비밀번호 메모/별칭 (예: 마스터 비번, 동행인 A용 등 - 선택)"
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-400"
                   />
                   <input
@@ -2857,13 +2943,25 @@
                 </div>
               ) : (
                 <form onSubmit={handleEntryLogin} className="space-y-3">
+                  {/* Face ID / 지문 생체인증이 이미 저장되어 있는 경우 원터치 로그인 버튼 최우선 제공 */}
+                  {hasBiometricHardware && isBiometricSaved && (
+                    <button
+                      type="button"
+                      onClick={handleBiometricUnlock}
+                      className="w-full py-3.5 px-3 rounded-2xl bg-gradient-to-r from-pink-500 to-indigo-600 hover:opacity-95 keep-white text-sm font-black shadow-lg transition flex items-center justify-center gap-2 mb-2"
+                    >
+                      <span className="text-lg">👤</span>
+                      <span>Face ID / 지문으로 1초 만에 바로 열기</span>
+                    </button>
+                  )}
+
                   <div className="space-y-1.5">
                     <label className="block text-[11px] font-extrabold text-slate-300">
                       🔒 시작 페이지 접속 비밀번호
                     </label>
                     <input
                       type="password"
-                      autoFocus
+                      autoFocus={!isBiometricSaved}
                       value={entryPasswordInput}
                       onChange={(e) => setEntryPasswordInput(e.target.value)}
                       placeholder="지정된 접속 비밀번호를 입력하세요"
@@ -2877,6 +2975,18 @@
                     </div>
                   )}
 
+                  {hasBiometricHardware && (
+                    <label className="flex items-center gap-2 cursor-pointer text-[11px] text-slate-300 font-semibold select-none py-1">
+                      <input
+                        type="checkbox"
+                        checked={enableBiometricAfterLogin}
+                        onChange={(e) => setEnableBiometricAfterLogin(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-700 text-pink-500 focus:ring-0 cursor-pointer"
+                      />
+                      <span>다음 방문 시 Face ID / 지문으로 간편 로그인</span>
+                    </label>
+                  )}
+
                   <button
                     type="submit"
                     className="w-full py-3.5 rounded-2xl timeline-btn keep-white font-black text-sm shadow-lg transition flex items-center justify-center gap-1.5"
@@ -2885,19 +2995,19 @@
                     <span>비밀번호 확인 후 플래너 열기</span>
                   </button>
 
-                  {hasBiometricHardware && (
+                  {hasBiometricHardware && !isBiometricSaved && (
                     <button
                       type="button"
                       onClick={handleBiometricUnlock}
                       className="w-full py-2.5 px-3 rounded-2xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-black text-indigo-300 transition flex items-center justify-center gap-1.5"
                     >
                       <span>👤</span>
-                      <span>Face ID / 지문으로 1초 만에 열기</span>
+                      <span>Face ID / 지문으로 열기</span>
                     </button>
                   )}
 
                   <div className="text-[11px] text-center text-slate-400 font-semibold space-y-0.5">
-                    <div>✨ 한 번 열린 기기(내 폰·여친 폰·맥북)는 영구 자동 로그인됩니다</div>
+                    <div>✨ 인증된 기기(스마트폰·태블릿·PC)는 간편하게 유지됩니다</div>
                     <div>
                       🛡️ 보안 보호 작동 중 · 비밀번호 5회 오류 시 해당 IP 자동 차단
                       {remainingAttempts < 5 && (
@@ -3145,7 +3255,7 @@
                 </div>
               </div>
 
-              {/* 데스크탑(맥북) 상단 앱 탭 바 — 모바일 앱과 동일한 3개 탭 구성 */}
+              {/* 데스크탑 / 대화면 상단 앱 탭 바 — 모바일 앱과 동일한 3개 탭 구성 */}
               <div className="hidden lg:grid lg:grid-cols-3 gap-2 pt-1">
                 <button
                   onClick={() => switchAppView("split")}
@@ -4405,29 +4515,18 @@
                   )}
                 </div>
 
-                {/* 🚀 카톡 전송용 원클릭 프리패스 링크 복사 */}
+                {/* 🎲 매번 바뀌는 원클릭 난수 초대 링크 복사 */}
                 <button
                   type="button"
-                  onClick={() => {
-                    const shareUrl = `${window.location.origin}${window.location.pathname}#auth=${encodeURIComponent(savedAuthPinRef.current || "K7@mQ2#v")}`;
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                      navigator.clipboard.writeText(shareUrl).then(() => {
-                        showToast("📋 카톡 전송용 원클릭 프리패스 링크가 복사되었습니다!");
-                      }).catch(() => {
-                        window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
-                      });
-                    } else {
-                      window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
-                    }
-                  }}
-                  className="w-full p-3.5 rounded-2xl bg-pink-500/15 border border-pink-400/40 text-left"
+                  onClick={handleGenerateInviteTicket}
+                  className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-pink-500/20 to-indigo-500/20 border border-pink-400/40 text-left hover:opacity-95 transition"
                 >
                   <div className="text-xs font-extrabold text-pink-300 flex items-center justify-between">
-                    <span>📲 카톡 전송용 원클릭 프리패스 링크 복사</span>
-                    <span className="text-[10px] text-pink-400 font-bold">비번 입력 0초 통과</span>
+                    <span>🎲 원클릭 난수 초대 링크 복사</span>
+                    <span className="text-[10px] text-pink-400 font-bold">비밀번호 노출 0%</span>
                   </div>
                   <p className="text-[11px] text-slate-300 mt-0.5 whitespace-normal">
-                    이 링크를 카톡으로 보내면 여자친구나 내 폰에서 비밀번호를 직접 칠 필요 없이 누르는 즉시 플래너가 열립니다.
+                    매번 다른 보안 난수 토큰으로 생성되어 실제 비밀번호를 알 수 없으며, 누르는 즉시 플래너가 열립니다.
                   </p>
                 </button>
 
