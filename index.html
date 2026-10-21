@@ -914,6 +914,24 @@
       const [adminNewPasswordLabel, setAdminNewPasswordLabel] = useState("");
       const [adminFeedbackMsg, setAdminFeedbackMsg] = useState("");
 
+      // 👤 WebAuthn 생체인증 (Face ID / Touch ID / 지문) 지원 상태
+      const STORAGE_KEY_BIOMETRIC_SAVED = "travel_planner_biometric_saved_v1";
+      const [hasBiometricHardware, setHasBiometricHardware] = useState(false);
+      const [isBiometricSaved, setIsBiometricSaved] = useState(
+        () => localStorage.getItem(STORAGE_KEY_BIOMETRIC_SAVED) === "true"
+      );
+
+      useEffect(() => {
+        if (
+          window.PublicKeyCredential &&
+          typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function"
+        ) {
+          window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+            .then((avail) => setHasBiometricHardware(Boolean(avail)))
+            .catch(() => setHasBiometricHardware(false));
+        }
+      }, []);
+
       useEffect(() => {
         savedAuthPinRef.current = savedAuthPin;
         if (savedAuthPin) {
@@ -1216,10 +1234,10 @@
         }
       };
 
-      // 🔑 시작 페이지 입장 비밀번호 검증 핸들러 (5회 실패 시 IP 자동 차단)
-      const handleEntryLogin = async (e) => {
+      // 🔑 시작 페이지 입장 비밀번호 검증 핸들러 (5회 실패 시 IP 자동 차단 / 원클릭 프리패스 링크 지원)
+      const handleEntryLogin = async (e, directPassword = null) => {
         if (e && e.preventDefault) e.preventDefault();
-        const candidate = entryPasswordInput.trim();
+        const candidate = (directPassword !== null ? directPassword : entryPasswordInput).trim();
         if (!candidate) {
           setEntryErrorMsg("비밀번호를 입력해주세요.");
           return;
@@ -1284,9 +1302,9 @@
       };
 
       // 👑 관리자 전용 비밀번호 인증 후 [관리자 권한 페이지] 열기
-      const handleAdminLogin = async (e) => {
+      const handleAdminLogin = async (e, directAdminKey = null) => {
         if (e && e.preventDefault) e.preventDefault();
-        const keyCandidate = adminKeyInput.trim();
+        const keyCandidate = (directAdminKey !== null ? directAdminKey : adminKeyInput).trim();
         if (!keyCandidate) {
           setAdminFeedbackMsg("⚠️ 관리자 전용 비밀번호를 입력해주세요.");
           return;
@@ -1436,8 +1454,98 @@
         showToast("🔒 화면이 잠겼습니다. 다시 입장하려면 비밀번호를 입력해주세요.");
       };
 
-      // 첫 실행 시 저장된 비밀번호가 있으면 자동 검증 후 불러오기 + 실시간 폴링 동기화
+      // 👤 Face ID / 지문 생체인증으로 즉시 잠금 해제
+      const handleBiometricUnlock = async () => {
+        if (!window.PublicKeyCredential) {
+          showToast("이 기기 브라우저에서는 생체 인증을 지원하지 않습니다.");
+          return;
+        }
+        try {
+          const savedPin = savedAuthPinRef.current || localStorage.getItem(STORAGE_KEY_AUTH_PIN);
+          if (!savedPin) {
+            showToast("최초 1회 비밀번호로 먼저 접속해주세요.");
+            return;
+          }
+          const challenge = new Uint8Array(32);
+          window.crypto.getRandomValues(challenge);
+          const cred = await navigator.credentials.get({
+            publicKey: {
+              challenge,
+              timeout: 60000,
+              userVerification: "required"
+            }
+          });
+          if (cred) {
+            handleEntryLogin(null, savedPin);
+            showToast("👤 생체 인증(Face ID / 지문) 확인 완료!");
+          }
+        } catch (e) {
+          // 취소된 경우 무시
+        }
+      };
+
+      // 👤 Face ID / 지문 생체인증 기기 등록
+      const handleRegisterBiometric = async () => {
+        if (!window.PublicKeyCredential) {
+          showToast("생체 인증을 지원하지 않는 브라우저입니다.");
+          return;
+        }
+        try {
+          const challenge = new Uint8Array(32);
+          window.crypto.getRandomValues(challenge);
+          const userId = new Uint8Array(16);
+          window.crypto.getRandomValues(userId);
+          await navigator.credentials.create({
+            publicKey: {
+              challenge,
+              rp: { name: "스마트 여행 플래너" },
+              user: { id: userId, name: "traveler", displayName: "여행자" },
+              pubKeyCredParams: [{ alg: -7, type: "public-key" }],
+              authenticatorSelection: { userVerification: "required", authenticatorAttachment: "platform" },
+              timeout: 60000
+            }
+          });
+          localStorage.setItem(STORAGE_KEY_BIOMETRIC_SAVED, "true");
+          setIsBiometricSaved(true);
+          showToast("👤 Face ID / 지문 생체인증이 등록되었습니다! 다음부터 터치 한 번으로 열립니다.");
+        } catch (e) {
+          showToast("생체 인증 등록이 취소되었거나 지원되지 않습니다.");
+        }
+      };
+
+      // 첫 실행 시: 1) URL 원클릭 패스키 자동 감지 -> 2) 저장된 기기 인증 확인 -> 3) 실시간 폴링 동기화
       useEffect(() => {
+        // 🚀 URL에서 원클릭 프리패스 키(?auth=... 또는 #auth=...) 자동 감지 및 자동 로그인
+        try {
+          const urlParams = new URLSearchParams(window.location.search);
+          const hashStr = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+          const hashParams = new URLSearchParams(hashStr);
+
+          const incomingPass =
+            urlParams.get("auth") ||
+            urlParams.get("pass") ||
+            urlParams.get("key") ||
+            urlParams.get("token") ||
+            hashParams.get("auth") ||
+            hashParams.get("pass") ||
+            hashParams.get("key") ||
+            hashParams.get("token");
+
+          const incomingAdmin = urlParams.get("admin") || hashParams.get("admin");
+
+          if (incomingPass) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+            handleEntryLogin(null, incomingPass);
+            return;
+          }
+
+          if (incomingAdmin) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+            handleAdminLogin(null, incomingAdmin);
+            return;
+          }
+        } catch (e) {}
+
         if (savedAuthPinRef.current) {
           fetchCloudData(false, savedAuthPinRef.current);
         } else {
@@ -2525,6 +2633,42 @@
                 </div>
               )}
 
+              {/* 🚀 원클릭 카톡 프리패스 초대 링크 (비밀번호 타이핑 불필요) */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-pink-500/15 to-indigo-500/15 border border-pink-400/40 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-black text-white flex items-center gap-1.5">
+                    <span>📲</span>
+                    <span>원클릭 카톡 프리패스 링크</span>
+                  </div>
+                  <span className="text-[10px] font-bold text-pink-300 bg-pink-500/20 px-2 py-0.5 rounded-full">
+                    비번 입력 0초 통과
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  이 링크를 카톡으로 나 자신이나 여자친구에게 보내면, <b>비밀번호를 일일이 칠 필요 없이 누르는 즉시 자동으로 로그인</b>되고 주소창에서 암호 흔적도 깔끔하게 자동 삭제됩니다!
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const activePw = savedAuthPinRef.current || (adminAccessEntries[0] ? adminAccessEntries[0].id : "K7@mQ2#v");
+                    const shareUrl = `${window.location.origin}${window.location.pathname}#auth=${encodeURIComponent(savedAuthPinRef.current || "K7@mQ2#v")}`;
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(shareUrl).then(() => {
+                        showToast("📋 원클릭 카톡 프리패스 링크가 복사되었습니다! 카톡에 붙여넣어 보내세요.");
+                      }).catch(() => {
+                        window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
+                      });
+                    } else {
+                      window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
+                    }
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-500 to-indigo-600 hover:opacity-95 keep-white text-xs font-black shadow-lg transition flex items-center justify-center gap-1.5"
+                >
+                  <span>📋</span>
+                  <span>여자친구 / 내 폰 카톡 전송용 프리패스 링크 복사</span>
+                </button>
+              </div>
+
               {/* 1. 새 비밀번호 지정 / 추가 */}
               <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
                 <div className="text-xs font-black text-white flex items-center justify-between">
@@ -2741,13 +2885,27 @@
                     <span>비밀번호 확인 후 플래너 열기</span>
                   </button>
 
-                  <div className="text-[11px] text-center text-slate-400 font-semibold">
-                    🛡️ 보안 작동 중 · 비밀번호 5회 오류 시 해당 IP가 자동 차단됩니다
-                    {remainingAttempts < 5 && (
-                      <span className="text-amber-300 font-extrabold ml-1">
-                        (남은 기회: {remainingAttempts}회)
-                      </span>
-                    )}
+                  {hasBiometricHardware && (
+                    <button
+                      type="button"
+                      onClick={handleBiometricUnlock}
+                      className="w-full py-2.5 px-3 rounded-2xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-black text-indigo-300 transition flex items-center justify-center gap-1.5"
+                    >
+                      <span>👤</span>
+                      <span>Face ID / 지문으로 1초 만에 열기</span>
+                    </button>
+                  )}
+
+                  <div className="text-[11px] text-center text-slate-400 font-semibold space-y-0.5">
+                    <div>✨ 한 번 열린 기기(내 폰·여친 폰·맥북)는 영구 자동 로그인됩니다</div>
+                    <div>
+                      🛡️ 보안 보호 작동 중 · 비밀번호 5회 오류 시 해당 IP 자동 차단
+                      {remainingAttempts < 5 && (
+                        <span className="text-amber-300 font-extrabold ml-1">
+                          (남은 기회: {remainingAttempts}회)
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </form>
               )}
@@ -4246,6 +4404,51 @@
                     <p className="text-[11px] text-rose-400 font-bold">{adminFeedbackMsg}</p>
                   )}
                 </div>
+
+                {/* 🚀 카톡 전송용 원클릭 프리패스 링크 복사 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const shareUrl = `${window.location.origin}${window.location.pathname}#auth=${encodeURIComponent(savedAuthPinRef.current || "K7@mQ2#v")}`;
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(shareUrl).then(() => {
+                        showToast("📋 카톡 전송용 원클릭 프리패스 링크가 복사되었습니다!");
+                      }).catch(() => {
+                        window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
+                      });
+                    } else {
+                      window.prompt("아래 링크를 복사하여 카톡으로 보내세요:", shareUrl);
+                    }
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-pink-500/15 border border-pink-400/40 text-left"
+                >
+                  <div className="text-xs font-extrabold text-pink-300 flex items-center justify-between">
+                    <span>📲 카톡 전송용 원클릭 프리패스 링크 복사</span>
+                    <span className="text-[10px] text-pink-400 font-bold">비번 입력 0초 통과</span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 mt-0.5 whitespace-normal">
+                    이 링크를 카톡으로 보내면 여자친구나 내 폰에서 비밀번호를 직접 칠 필요 없이 누르는 즉시 플래너가 열립니다.
+                  </p>
+                </button>
+
+                {/* 👤 Face ID / 지문 생체인증 등록 */}
+                {hasBiometricHardware && (
+                  <button
+                    type="button"
+                    onClick={handleRegisterBiometric}
+                    className="w-full p-3.5 rounded-2xl bg-indigo-500/15 border border-indigo-500/40 text-left"
+                  >
+                    <div className="text-xs font-extrabold text-indigo-300 flex items-center justify-between">
+                      <span>👤 Face ID / 지문 생체인증 등록</span>
+                      <span className="text-[10px] text-indigo-400 font-bold">
+                        {isBiometricSaved ? "등록 완료" : "간편 열기"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
+                      기기에 생체인증을 등록해두면 비밀번호 대신 화면을 보거나 손가락 터치만으로 1초 만에 플래너를 엽니다.
+                    </p>
+                  </button>
+                )}
 
                 <button
                   onClick={() => {
