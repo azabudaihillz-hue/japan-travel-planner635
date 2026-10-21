@@ -1,12 +1,13 @@
 /**
- * Vercel Serverless Function: /api/sync (Security-Hardened v2)
+ * Vercel Serverless Function: /api/sync (Security-Hardened v3 — Full Entry Gate & Admin Vault)
  *
  * 보안 패치 적용 내역:
- * 1) 프론트엔드(index.html)에서 Supabase Anon Key 완전 은닉 및 서버 단독 통신 구조화
- * 2) IP 기반 슬라이딩 윈도우 레이트 리미팅 (DDoS / 무차별 대입 공격 차단)
- * 3) 프로토타입 오염(__proto__, constructor) 원천 차단 및 엄격한 스키마·길이·좌표 검증
- * 4) 서버 측 SHA-256 해시 기반 편집 잠금(PIN Lock) 검증 (비밀번호 불일치 시 403 차단 및 해시값 외부 비노출)
- * 5) CSRF 방어용 커스텀 헤더 검증 및 내부 스택 트레이스 정보 노출 차단
+ * 1) 시작 페이지 전체 잠금 게이트: 유효한 접속 비밀번호 없이는 GET/POST 모두 여행 데이터를 절대 반환·수정하지 않음
+ * 2) PBKDF2-HMAC-SHA512 (100,000회 반복 + 고유 Salt) 단방향 암호화 및 타이밍 공격 방어(crypto.timingSafeEqual)
+ *    - 소스코드 어디에도 초기 비밀번호 및 관리자 비밀번호 평문이 존재하지 않음
+ * 3) 비밀번호 5회 오류 시 해당 IP 자동 영구 차단 (메모리 + 클라우드 DB 이중 영구 기록)
+ * 4) 관리자 전용 비밀번호 인증 시에만 열리는 [관리자 권한 페이지]에서 접속 허용 비밀번호 지정·추가·삭제 및 차단 IP 해제 지원
+ * 5) 프로토타입 오염 방지, XSS 제어문자 정제, 250KB 용량 제한, 슬라이딩 윈도우 Rate Limiting 적용
  */
 
 const crypto = require("crypto");
@@ -18,26 +19,44 @@ const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFianNwbnVvaHhvdXVma2RqZWZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMDA5NzcsImV4cCI6MjEwNDg3Njk3N30.hVL3TRPwA1xalf1Tb2LiKJ58Q_DgBc5RWwFs2AfR890";
 
 const SYNC_ROW_KEY = "JAPAN_TRAVEL_PLANNER_635";
-const PIN_HASH_SALT = "JP_TRAVEL_PLANNER_635_SECURITY_SALT_v2";
+
+// 🔐 PBKDF2-HMAC-SHA512 (100,000 iterations) 보안 상수 — 평문 비밀번호는 코드에 일절 저장하지 않음
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_KEYLEN = 64;
+const PBKDF2_DIGEST = "sha512";
+
+const DEFAULT_ENTRY_SALT = "JP635_ENTRY_DEFAULT_SALT_v3_99f1a4c8";
+const DEFAULT_ENTRY_PBKDF2_HASH =
+  "8e2f0d712822571d7b38aae78443f99b40ca70edbbcc664136d1b7654a2a9cddfa814f418de9f5b767f4e6ff9c0b6cd39623083473489d735ab0d1770ad6d954";
+
+const ADMIN_MASTER_SALT = "JP635_ADMIN_MASTER_SALT_v3_e7b204d1";
+const ADMIN_MASTER_PBKDF2_HASH =
+  "b9930fbde86ad79e8c2d8b6c39ed23689c35d7a98a5eab5e21f67ec8e4fc6b28e0e83a8fbdc4fa9e43b5988f940542b04d27cafe5d4c3e45e7664e2daa8260f4";
+
+const MAX_PIN_FAILS = 5;
 
 let memoryFallback = null;
 
-// 🛡️ IP별 요청 속도 제한 (Rate Limiter) 및 PIN 오입력 차단기
+// 🛡️ IP별 요청 속도 제한 (Rate Limiter) 및 오입력/차단 메모리 캐시
 const rateLimitStore = new Map();
-const pinFailStore = new Map();
+const ipSecurityMemory = new Map();
 
 function getClientIp(req) {
   const xff = req.headers["x-forwarded-for"];
   if (typeof xff === "string" && xff.length > 0) {
-    return xff.split(",")[0].trim();
+    return xff.split(",")[0].trim().slice(0, 64);
   }
-  return req.socket?.remoteAddress || "unknown";
+  const realIp = req.headers["x-real-ip"];
+  if (typeof realIp === "string" && realIp.length > 0) {
+    return realIp.trim().slice(0, 64);
+  }
+  return (req.socket?.remoteAddress || "unknown").slice(0, 64);
 }
 
 function checkRateLimit(ip, method) {
   const now = Date.now();
   const windowMs = 60 * 1000;
-  const maxReq = method === "POST" ? 30 : 90;
+  const maxReq = method === "POST" ? 40 : 90;
 
   let record = rateLimitStore.get(ip);
   if (!record || now - record.windowStart > windowMs) {
@@ -54,37 +73,17 @@ function checkRateLimit(ip, method) {
   return record.count <= maxReq;
 }
 
-function isIpBlockedForPin(ip) {
-  const rec = pinFailStore.get(ip);
-  if (!rec) return false;
-  if (Date.now() - rec.lastFail > 5 * 60 * 1000) {
-    pinFailStore.delete(ip);
-    return false;
+function derivePbkdf2Hex(rawPassword, salt) {
+  if (typeof rawPassword !== "string" || !rawPassword || typeof salt !== "string" || !salt) {
+    return "";
   }
-  return rec.fails >= 5;
-}
-
-function recordPinFailure(ip) {
-  const now = Date.now();
-  const rec = pinFailStore.get(ip) || { fails: 0, lastFail: now };
-  if (now - rec.lastFail > 5 * 60 * 1000) {
-    rec.fails = 0;
+  try {
+    return crypto
+      .pbkdf2Sync(rawPassword, salt, PBKDF2_ITERATIONS, PBKDF2_KEYLEN, PBKDF2_DIGEST)
+      .toString("hex");
+  } catch {
+    return "";
   }
-  rec.fails += 1;
-  rec.lastFail = now;
-  pinFailStore.set(ip, rec);
-}
-
-function clearPinFailure(ip) {
-  pinFailStore.delete(ip);
-}
-
-function hashPinCode(rawPin) {
-  if (!rawPin || typeof rawPin !== "string") return "";
-  return crypto
-    .createHash("sha256")
-    .update(`${PIN_HASH_SALT}:${rawPin.trim()}`)
-    .digest("hex");
 }
 
 function safeTimingEqualHex(a, b) {
@@ -95,6 +94,166 @@ function safeTimingEqualHex(a, b) {
   } catch {
     return false;
   }
+}
+
+function maskPasswordHint(pw) {
+  if (typeof pw !== "string") return "••••";
+  const trimmed = pw.trim();
+  if (trimmed.length <= 2) return "••••";
+  if (trimmed.length <= 4) {
+    return `${trimmed[0]}•••${trimmed[trimmed.length - 1]}`;
+  }
+  return `${trimmed.slice(0, 2)}${"•".repeat(Math.min(6, trimmed.length - 3))}${trimmed.slice(-1)}`;
+}
+
+function verifyAdminMasterKey(candidate) {
+  if (typeof candidate !== "string") return false;
+  const trimmed = candidate.trim();
+  if (!trimmed) return false;
+  const derived = derivePbkdf2Hex(trimmed, ADMIN_MASTER_SALT);
+  return safeTimingEqualHex(derived, ADMIN_MASTER_PBKDF2_HASH);
+}
+
+function ensureSecurityConfig(existingObj) {
+  const base =
+    existingObj &&
+    typeof existingObj === "object" &&
+    existingObj.securityConfig &&
+    typeof existingObj.securityConfig === "object"
+      ? existingObj.securityConfig
+      : {};
+
+  let accessEntries = Array.isArray(base.accessEntries)
+    ? base.accessEntries.filter(
+        (e) =>
+          e &&
+          typeof e === "object" &&
+          typeof e.salt === "string" &&
+          typeof e.hash === "string" &&
+          e.hash.length === 128
+      )
+    : [];
+
+  if (accessEntries.length === 0) {
+    accessEntries = [
+      {
+        id: "default-entry-key",
+        label: "초기 지정 비밀번호",
+        maskedHint: "•••••••• (암호화 보호됨)",
+        salt: DEFAULT_ENTRY_SALT,
+        hash: DEFAULT_ENTRY_PBKDF2_HASH,
+        createdAt: "기본 보안 설정",
+      },
+    ];
+  }
+
+  const ipRecords =
+    base.ipRecords && typeof base.ipRecords === "object" && !Array.isArray(base.ipRecords)
+      ? { ...base.ipRecords }
+      : {};
+
+  // 메모리 캐시와 병합하여 서버리스 인스턴스 간 상태 동기화
+  for (const [ip, memRec] of ipSecurityMemory.entries()) {
+    const cloudRec = ipRecords[ip];
+    if (!cloudRec || (memRec.fails || 0) > (cloudRec.fails || 0) || memRec.banned) {
+      ipRecords[ip] = { ...memRec };
+    }
+  }
+  for (const [ip, cloudRec] of Object.entries(ipRecords)) {
+    if (cloudRec && typeof cloudRec === "object") {
+      ipSecurityMemory.set(ip, { ...cloudRec });
+    }
+  }
+
+  return {
+    accessEntries,
+    ipRecords,
+  };
+}
+
+function verifyAccessPassword(candidate, securityConfig) {
+  if (typeof candidate !== "string") return false;
+  const trimmed = candidate.trim();
+  if (!trimmed) return false;
+
+  const entries = Array.isArray(securityConfig?.accessEntries)
+    ? securityConfig.accessEntries
+    : [];
+
+  for (const entry of entries) {
+    const derived = derivePbkdf2Hex(trimmed, entry.salt);
+    if (safeTimingEqualHex(derived, entry.hash)) {
+      return true;
+    }
+  }
+
+  // 관리자 마스터 비밀번호로도 입장 허용
+  if (verifyAdminMasterKey(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+function getIpStatus(ip, securityConfig) {
+  const rec =
+    securityConfig?.ipRecords?.[ip] ||
+    ipSecurityMemory.get(ip) || {
+      fails: 0,
+      banned: false,
+      bannedAt: null,
+      lastAttemptAt: 0,
+    };
+  return {
+    fails: Number(rec.fails) || 0,
+    banned: Boolean(rec.banned) || (Number(rec.fails) || 0) >= MAX_PIN_FAILS,
+    bannedAt: rec.bannedAt || null,
+    lastAttemptAt: Number(rec.lastAttemptAt) || 0,
+  };
+}
+
+function registerIpFailure(ip, securityConfig) {
+  const current = getIpStatus(ip, securityConfig);
+  const nextFails = current.fails + 1;
+  const isNowBanned = nextFails >= MAX_PIN_FAILS;
+  const updated = {
+    fails: nextFails,
+    banned: isNowBanned,
+    bannedAt: isNowBanned
+      ? current.bannedAt || new Date().toLocaleString("ko-KR")
+      : null,
+    lastAttemptAt: Date.now(),
+  };
+  securityConfig.ipRecords[ip] = updated;
+  ipSecurityMemory.set(ip, updated);
+  return updated;
+}
+
+function resetIpFailure(ip, securityConfig) {
+  if (securityConfig?.ipRecords?.[ip]) {
+    delete securityConfig.ipRecords[ip];
+  }
+  ipSecurityMemory.delete(ip);
+}
+
+function formatAdminClientPayload(securityConfig) {
+  const accessEntries = (securityConfig.accessEntries || []).map((e, idx) => ({
+    id: String(e.id || `pw-${idx}`),
+    label: String(e.label || `허용 비밀번호 #${idx + 1}`),
+    maskedHint: String(e.maskedHint || "••••"),
+    createdAt: String(e.createdAt || ""),
+  }));
+
+  const bannedIps = Object.entries(securityConfig.ipRecords || {})
+    .filter(([, rec]) => rec && (rec.banned || (rec.fails || 0) > 0))
+    .map(([ip, rec]) => ({
+      ip,
+      fails: Number(rec.fails) || 0,
+      banned: Boolean(rec.banned) || (Number(rec.fails) || 0) >= MAX_PIN_FAILS,
+      bannedAt: rec.bannedAt || "-",
+    }));
+
+  return { accessEntries, bannedIps };
 }
 
 // 🧹 입력 문자열 정제 (제어문자 제거 및 최대 길이 제한)
@@ -120,7 +279,7 @@ function clampNumber(val, min, max, fallback) {
 }
 
 // 🛡️ 스키마 검증 및 정제 (XSS / JSON 폭탄 / 프로토타입 오염 방지)
-function sanitizeSyncPayload(raw, existingLockHash = "") {
+function sanitizeSyncPayload(raw, securityConfig) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("Invalid payload object");
   }
@@ -218,16 +377,23 @@ function sanitizeSyncPayload(raw, existingLockHash = "") {
     forceOverwrite: Boolean(raw.forceOverwrite),
     updatedAt: clampNumber(raw.updatedAt, 0, Date.now() + 60000, Date.now()),
     clientId: cleanString(raw.clientId, 64, "unknown").replace(/[^a-zA-Z0-9_-]/g, ""),
-    lockHash: existingLockHash || "",
+    securityConfig,
   };
 }
 
 function stripSensitiveFieldsForClient(data) {
-  if (!data || typeof data !== "object") return data;
-  const { lockHash, ...safeData } = data;
+  if (!data || typeof data !== "object") {
+    return {
+      pins: [],
+      notes: [],
+      checklist: [],
+      empty: true,
+      updatedAt: 0,
+    };
+  }
+  const { lockHash, securityConfig, ...safeData } = data;
   return {
     ...safeData,
-    isLocked: Boolean(lockHash),
   };
 }
 
@@ -312,6 +478,28 @@ async function saveToSupabase(payload) {
   }
 }
 
+async function persistSecurityConfigOnly(existingData, securityConfig) {
+  const payload =
+    existingData && typeof existingData === "object"
+      ? { ...existingData, securityConfig }
+      : {
+          pins: [],
+          tripTitle: "우리의 일본 여행 ✈️",
+          exchangeRate: 9.05,
+          peopleCount: 2,
+          notes: [],
+          checklist: [],
+          updatedAt: Date.now(),
+          securityConfig,
+        };
+  memoryFallback = payload;
+  try {
+    await saveToSupabase(payload);
+  } catch {
+    // 메모리 캐시에 이미 유지됨
+  }
+}
+
 module.exports = async function handler(req, res) {
   // 🔒 보안 응답 헤더 설정
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -345,32 +533,48 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    if (req.method === "GET") {
-      try {
-        const cloudData = await fetchFromSupabase();
-        if (cloudData) {
-          memoryFallback = cloudData;
-          return res.status(200).json(stripSensitiveFieldsForClient(cloudData));
-        }
-      } catch {
-        if (memoryFallback) {
-          return res.status(200).json(stripSensitiveFieldsForClient(memoryFallback));
-        }
-      }
-      return res.status(200).json(
-        memoryFallback
-          ? stripSensitiveFieldsForClient(memoryFallback)
-          : {
-              pins: [],
-              notes: [],
-              checklist: [],
-              empty: true,
-              isLocked: false,
-              updatedAt: 0,
-            }
-      );
+    // 현재 클라우드 데이터 및 보안 설정 로드
+    let existing = null;
+    try {
+      existing = await fetchFromSupabase();
+      if (existing) memoryFallback = existing;
+    } catch {
+      existing = memoryFallback;
     }
 
+    const securityConfig = ensureSecurityConfig(existing);
+    const ipStatus = getIpStatus(clientIp, securityConfig);
+
+    // =========================================================================
+    // 1. GET 요청: 유효한 접속 비밀번호 헤더(X-Planner-Pin)가 있어야만 데이터 반환
+    // =========================================================================
+    if (req.method === "GET") {
+      if (ipStatus.banned) {
+        return res.status(403).json({
+          ok: false,
+          ipBanned: true,
+          clientIp,
+          error: `🚫 비밀번호 ${MAX_PIN_FAILS}회 연속 오류로 인해 현재 IP(${clientIp})의 접속이 자동 차단되었습니다.`,
+        });
+      }
+
+      const headerPin = cleanString(req.headers["x-planner-pin"] || "", 64, "");
+      if (!headerPin || !verifyAccessPassword(headerPin, securityConfig)) {
+        return res.status(401).json({
+          ok: false,
+          requiresAuth: true,
+          clientIp,
+          remainingAttempts: Math.max(0, MAX_PIN_FAILS - ipStatus.fails),
+          error: "시작 페이지 비밀번호 인증이 필요합니다.",
+        });
+      }
+
+      return res.status(200).json(stripSensitiveFieldsForClient(existing || memoryFallback));
+    }
+
+    // =========================================================================
+    // 2. POST 요청: 인증 / 관리자 설정 / 데이터 동기화
+    // =========================================================================
     if (req.method === "POST") {
       // CSRF 방어: 전용 커스텀 헤더 확인
       const requestedWith = req.headers["x-requested-with"];
@@ -378,14 +582,6 @@ module.exports = async function handler(req, res) {
         return res.status(403).json({
           ok: false,
           error: "승인되지 않은 외부 요청입니다 (CSRF Blocked).",
-        });
-      }
-
-      if (isIpBlockedForPin(clientIp)) {
-        return res.status(429).json({
-          ok: false,
-          locked: true,
-          error: "비밀번호 입력 실패 횟수를 초과했습니다. 5분 후 다시 시도해주세요.",
         });
       }
 
@@ -402,71 +598,238 @@ module.exports = async function handler(req, res) {
       try {
         body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
       } catch {
-        return res.status(400).json({ ok: false, error: " 잘못된 JSON 형식입니다." });
+        return res.status(400).json({ ok: false, error: "잘못된 JSON 형식입니다." });
       }
 
-      // 현재 클라우드 데이터 및 잠금 상태 조회
-      let existing = null;
-      try {
-        existing = await fetchFromSupabase();
-      } catch {
-        existing = memoryFallback;
+      const action = cleanString(body.action || "", 40, "");
+
+      // -----------------------------------------------------------------------
+      // 👑 관리자 전용 액션들 (PBKDF2-SHA512 마스터 해시 검증)
+      // -----------------------------------------------------------------------
+      if (
+        action === "adminLogin" ||
+        action === "adminSetPrimaryPassword" ||
+        action === "adminAddPassword" ||
+        action === "adminDeletePassword" ||
+        action === "adminUnbanIp"
+      ) {
+        // 관리자 키조차 무차별 대입하는 공격 차단 (8회 이상 실패 시 관리자 인증도 완전 차단)
+        if (ipStatus.fails >= MAX_PIN_FAILS + 3) {
+          return res.status(403).json({
+            ok: false,
+            ipBanned: true,
+            clientIp,
+            error: `🚫 반복된 인증 실패로 현재 IP(${clientIp})에서의 모든 접근이 차단되었습니다.`,
+          });
+        }
+
+        const candidateAdminKey = cleanString(body.adminKey || "", 64, "");
+        if (!verifyAdminMasterKey(candidateAdminKey)) {
+          const updatedIp = registerIpFailure(clientIp, securityConfig);
+          await persistSecurityConfigOnly(existing, securityConfig);
+
+          if (updatedIp.banned) {
+            return res.status(403).json({
+              ok: false,
+              ipBanned: true,
+              clientIp,
+              remainingAttempts: 0,
+              error: `🚫 비밀번호 ${MAX_PIN_FAILS}회 오류로 현재 IP(${clientIp})가 자동 차단되었습니다.`,
+            });
+          }
+
+          return res.status(401).json({
+            ok: false,
+            remainingAttempts: Math.max(0, MAX_PIN_FAILS - updatedIp.fails),
+            error: `관리자 비밀번호가 일치하지 않습니다. (남은 기회: ${Math.max(
+              0,
+              MAX_PIN_FAILS - updatedIp.fails
+            )}회 / ${MAX_PIN_FAILS}회 실패 시 IP 차단)`,
+          });
+        }
+
+        // 관리자 인증 성공 → 본인 IP의 실패 기록/차단 즉시 해제
+        resetIpFailure(clientIp, securityConfig);
+
+        if (action === "adminLogin") {
+          await persistSecurityConfigOnly(existing, securityConfig);
+          return res.status(200).json({
+            ok: true,
+            adminAuthorized: true,
+            ...formatAdminClientPayload(securityConfig),
+          });
+        }
+
+        if (action === "adminSetPrimaryPassword" || action === "adminAddPassword") {
+          const newPassword = cleanString(body.newPassword || "", 64, "");
+          const label = cleanString(
+            body.label ||
+              (action === "adminSetPrimaryPassword" ? "관리자 지정 비밀번호" : "추가 허용 비밀번호"),
+            40,
+            "지정 비밀번호"
+          );
+
+          if (newPassword.length < 4) {
+            return res.status(400).json({
+              ok: false,
+              error: "지정할 비밀번호는 최소 4자 이상이어야 합니다.",
+            });
+          }
+
+          const newSalt = `JP635_CUSTOM_${crypto.randomBytes(16).toString("hex")}`;
+          const newHash = derivePbkdf2Hex(newPassword, newSalt);
+          const newEntry = {
+            id: `pw-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+            label,
+            maskedHint: maskPasswordHint(newPassword),
+            salt: newSalt,
+            hash: newHash,
+            createdAt: new Date().toLocaleString("ko-KR"),
+          };
+
+          if (action === "adminSetPrimaryPassword") {
+            // 오직 이 비밀번호만 유효하도록 단독 지정
+            securityConfig.accessEntries = [newEntry];
+          } else {
+            // 기존 비밀번호 유지 + 새 비밀번호 추가 (최대 10개)
+            securityConfig.accessEntries = [
+              ...(securityConfig.accessEntries || []).slice(0, 9),
+              newEntry,
+            ];
+          }
+
+          await persistSecurityConfigOnly(existing, securityConfig);
+          return res.status(200).json({
+            ok: true,
+            message:
+              action === "adminSetPrimaryPassword"
+                ? "✅ 접속 비밀번호가 새 비밀번호로 단독 변경되었습니다."
+                : "✅ 새 접속 허용 비밀번호가 추가 등록되었습니다.",
+            ...formatAdminClientPayload(securityConfig),
+          });
+        }
+
+        if (action === "adminDeletePassword") {
+          const entryId = cleanString(body.entryId || "", 64, "");
+          const currentList = securityConfig.accessEntries || [];
+          if (currentList.length <= 1) {
+            return res.status(400).json({
+              ok: false,
+              error: "최소 1개의 접속 비밀번호는 유지되어야 합니다. 새 비밀번호를 먼저 추가하거나 변경해주세요.",
+            });
+          }
+          securityConfig.accessEntries = currentList.filter((e) => e.id !== entryId);
+          await persistSecurityConfigOnly(existing, securityConfig);
+          return res.status(200).json({
+            ok: true,
+            message: "🗑️ 선택한 비밀번호가 삭제되었습니다.",
+            ...formatAdminClientPayload(securityConfig),
+          });
+        }
+
+        if (action === "adminUnbanIp") {
+          const targetIp = cleanString(body.targetIp || "", 64, "");
+          if (targetIp === "ALL") {
+            securityConfig.ipRecords = {};
+            ipSecurityMemory.clear();
+          } else if (targetIp) {
+            resetIpFailure(targetIp, securityConfig);
+          }
+          await persistSecurityConfigOnly(existing, securityConfig);
+          return res.status(200).json({
+            ok: true,
+            message: "🔓 IP 차단이 해제되었습니다.",
+            ...formatAdminClientPayload(securityConfig),
+          });
+        }
       }
 
-      const currentLockHash =
-        existing && typeof existing.lockHash === "string" ? existing.lockHash : "";
+      // -----------------------------------------------------------------------
+      // 🚫 일반 요청 시 IP 차단 여부 우선 확인 (5회 실패 IP는 즉시 403 차단)
+      // -----------------------------------------------------------------------
+      if (ipStatus.banned) {
+        return res.status(403).json({
+          ok: false,
+          ipBanned: true,
+          clientIp,
+          remainingAttempts: 0,
+          error: `🚫 비밀번호 ${MAX_PIN_FAILS}회 연속 오류로 인해 현재 IP(${clientIp})의 접속이 자동 차단되었습니다.`,
+        });
+      }
+
       const providedPin = cleanString(
-        req.headers["x-planner-pin"] || body.authPin || "",
-        32,
+        req.headers["x-planner-pin"] || body.password || body.authPin || "",
+        64,
         ""
       );
-      const providedHash = providedPin ? hashPinCode(providedPin) : "";
 
-      // 🔒 액션 1: 비밀번호 검증 전용 요청 (verifyPinOnly)
-      if (body.action === "verifyPin") {
-        if (!currentLockHash) {
-          return res.status(200).json({ ok: true, isLocked: false, verified: true });
+      // -----------------------------------------------------------------------
+      // 🔑 시작 페이지 입장 비밀번호 검증 요청 (action === "authenticateEntry")
+      // -----------------------------------------------------------------------
+      if (action === "authenticateEntry") {
+        // 만약 시작 페이지 입력칸에 관리자 전용 마스터 키를 바로 입력한 경우 → 관리자 페이지 즉시 오픈 + 입장 허용!
+        if (verifyAdminMasterKey(providedPin)) {
+          resetIpFailure(clientIp, securityConfig);
+          await persistSecurityConfigOnly(existing, securityConfig);
+          return res.status(200).json({
+            ok: true,
+            authenticated: true,
+            openedAdmin: true,
+            clientIp,
+            cloudData: stripSensitiveFieldsForClient(existing),
+            ...formatAdminClientPayload(securityConfig),
+          });
         }
-        if (safeTimingEqualHex(providedHash, currentLockHash)) {
-          clearPinFailure(clientIp);
-          return res.status(200).json({ ok: true, isLocked: true, verified: true });
-        } else {
-          recordPinFailure(clientIp);
+
+        if (verifyAccessPassword(providedPin, securityConfig)) {
+          resetIpFailure(clientIp, securityConfig);
+          await persistSecurityConfigOnly(existing, securityConfig);
+          return res.status(200).json({
+            ok: true,
+            authenticated: true,
+            openedAdmin: false,
+            clientIp,
+            cloudData: stripSensitiveFieldsForClient(existing),
+          });
+        }
+
+        // 비밀번호 불일치 → 실패 횟수 증가 및 5회 도달 시 IP 즉시 차단
+        const updatedIp = registerIpFailure(clientIp, securityConfig);
+        await persistSecurityConfigOnly(existing, securityConfig);
+
+        if (updatedIp.banned) {
           return res.status(403).json({
             ok: false,
-            locked: true,
-            verified: false,
-            error: "보안 비밀번호가 일치하지 않습니다.",
+            ipBanned: true,
+            clientIp,
+            remainingAttempts: 0,
+            error: `🚫 비밀번호 ${MAX_PIN_FAILS}회 연속 오류로 인해 현재 IP(${clientIp})의 접속이 자동 차단되었습니다.`,
           });
         }
+
+        const remaining = Math.max(0, MAX_PIN_FAILS - updatedIp.fails);
+        return res.status(401).json({
+          ok: false,
+          ipBanned: false,
+          clientIp,
+          remainingAttempts: remaining,
+          error: `비밀번호가 일치하지 않습니다. (남은 기회: ${remaining}회 / ${MAX_PIN_FAILS}회 실패 시 IP 자동 차단)`,
+        });
       }
 
-      // 🔒 기존 잠금이 설정되어 있는 경우 모든 수정/잠금해제 요청에 대해 비밀번호 검증 필수!
-      if (currentLockHash) {
-        if (!safeTimingEqualHex(providedHash, currentLockHash)) {
-          recordPinFailure(clientIp);
-          return res.status(403).json({
-            ok: false,
-            locked: true,
-            error: "🔒 보안 잠금이 켜져 있습니다. 상단 자물쇠 또는 설정에서 비밀번호를 입력해주세요.",
-          });
-        }
-        clearPinFailure(clientIp);
-      }
-
-      // 🔒 액션 2: 새 비밀번호 설정 또는 잠금 해제 요청 (setPin / clearPin)
-      let nextLockHash = currentLockHash;
-      if (body.action === "setPin") {
-        const newPin = cleanString(body.newPin || "", 32, "");
-        if (newPin.length < 4) {
-          return res.status(400).json({
-            ok: false,
-            error: "비밀번호는 최소 4자리 이상이어야 합니다.",
-          });
-        }
-        nextLockHash = hashPinCode(newPin);
-      } else if (body.action === "clearPin") {
-        nextLockHash = "";
+      // -----------------------------------------------------------------------
+      // ☁️ 일반 일정·메모 저장 요청: 반드시 유효한 접속 비밀번호 헤더가 있어야만 허용
+      // -----------------------------------------------------------------------
+      if (!providedPin || !verifyAccessPassword(providedPin, securityConfig)) {
+        const updatedIp = registerIpFailure(clientIp, securityConfig);
+        await persistSecurityConfigOnly(existing, securityConfig);
+        return res.status(401).json({
+          ok: false,
+          requiresAuth: true,
+          ipBanned: updatedIp.banned,
+          remainingAttempts: Math.max(0, MAX_PIN_FAILS - updatedIp.fails),
+          error: "🔒 인증이 만료되었거나 비밀번호가 변경되었습니다. 다시 로그인해주세요.",
+        });
       }
 
       // 빈 초기 기기가 기존 클라우드 데이터를 덮어쓰는 현상 방지
@@ -474,9 +837,7 @@ module.exports = async function handler(req, res) {
       if (
         incomingPins.length === 0 &&
         !body.explicitlyCleared &&
-        !body.forceOverwrite &&
-        body.action !== "setPin" &&
-        body.action !== "clearPin"
+        !body.forceOverwrite
       ) {
         if (existing && Array.isArray(existing.pins) && existing.pins.length > 0) {
           return res.status(200).json({
@@ -487,16 +848,15 @@ module.exports = async function handler(req, res) {
         }
       }
 
-      const sanitizedPayload = sanitizeSyncPayload(body, nextLockHash);
+      const sanitizedPayload = sanitizeSyncPayload(body, securityConfig);
 
       memoryFallback = sanitizedPayload;
       await saveToSupabase(sanitizedPayload);
 
       return res.status(200).json({
         ok: true,
-        isLocked: Boolean(nextLockHash),
         updatedAt: sanitizedPayload.updatedAt,
-        storage: "supabase-couple-calendar-secured",
+        storage: "supabase-couple-calendar-secured-v3",
       });
     }
 
