@@ -914,25 +914,6 @@
       const [adminNewPasswordLabel, setAdminNewPasswordLabel] = useState("");
       const [adminFeedbackMsg, setAdminFeedbackMsg] = useState("");
 
-      // 👤 WebAuthn 생체인증 (Face ID / Touch ID / 지문) 지원 상태
-      const STORAGE_KEY_BIOMETRIC_SAVED = "travel_planner_biometric_saved_v1";
-      const [hasBiometricHardware, setHasBiometricHardware] = useState(false);
-      const [isBiometricSaved, setIsBiometricSaved] = useState(
-        () => localStorage.getItem(STORAGE_KEY_BIOMETRIC_SAVED) === "true"
-      );
-      const [enableBiometricAfterLogin, setEnableBiometricAfterLogin] = useState(true);
-
-      useEffect(() => {
-        if (
-          window.PublicKeyCredential &&
-          typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function"
-        ) {
-          window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
-            .then((avail) => setHasBiometricHardware(Boolean(avail)))
-            .catch(() => setHasBiometricHardware(false));
-        }
-      }, []);
-
       useEffect(() => {
         savedAuthPinRef.current = savedAuthPin;
         if (savedAuthPin) {
@@ -1287,12 +1268,6 @@
               showToast("🔓 비밀번호 인증 완료! 환영합니다.");
             }
 
-            // 기기 생체인증 지원 시 등록 유도
-            if (enableBiometricAfterLogin && window.PublicKeyCredential && !isBiometricSaved) {
-              setTimeout(() => {
-                handleRegisterBiometric();
-              }, 600);
-            }
           } else {
             if (data.ipBanned || res.status === 403) {
               setIsIpBanned(true);
@@ -1462,65 +1437,6 @@
         showToast("🔒 화면이 잠겼습니다. 다시 입장하려면 비밀번호를 입력해주세요.");
       };
 
-      // 👤 Face ID / 지문 생체인증으로 즉시 잠금 해제
-      const handleBiometricUnlock = async () => {
-        if (!window.PublicKeyCredential) {
-          showToast("이 기기 브라우저에서는 생체 인증을 지원하지 않습니다.");
-          return;
-        }
-        try {
-          const savedPin = savedAuthPinRef.current || localStorage.getItem(STORAGE_KEY_AUTH_PIN);
-          if (!savedPin) {
-            showToast("최초 1회 비밀번호로 먼저 접속해주세요.");
-            return;
-          }
-          const challenge = new Uint8Array(32);
-          window.crypto.getRandomValues(challenge);
-          const cred = await navigator.credentials.get({
-            publicKey: {
-              challenge,
-              timeout: 60000,
-              userVerification: "required"
-            }
-          });
-          if (cred) {
-            handleEntryLogin(null, savedPin);
-            showToast("👤 생체 인증(Face ID / 지문) 확인 완료!");
-          }
-        } catch (e) {
-          // 취소된 경우 무시
-        }
-      };
-
-      // 👤 Face ID / 지문 생체인증 기기 등록
-      const handleRegisterBiometric = async () => {
-        if (!window.PublicKeyCredential) {
-          showToast("생체 인증을 지원하지 않는 브라우저입니다.");
-          return;
-        }
-        try {
-          const challenge = new Uint8Array(32);
-          window.crypto.getRandomValues(challenge);
-          const userId = new Uint8Array(16);
-          window.crypto.getRandomValues(userId);
-          await navigator.credentials.create({
-            publicKey: {
-              challenge,
-              rp: { name: "스마트 여행 플래너" },
-              user: { id: userId, name: "traveler", displayName: "여행자" },
-              pubKeyCredParams: [{ alg: -7, type: "public-key" }],
-              authenticatorSelection: { userVerification: "required", authenticatorAttachment: "platform" },
-              timeout: 60000
-            }
-          });
-          localStorage.setItem(STORAGE_KEY_BIOMETRIC_SAVED, "true");
-          setIsBiometricSaved(true);
-          showToast("👤 Face ID / 지문 생체인증이 등록되었습니다! 다음부터 터치 한 번으로 열립니다.");
-        } catch (e) {
-          showToast("생체 인증 등록이 취소되었거나 지원되지 않습니다.");
-        }
-      };
-
       // 🎲 지속적 난수 초대 티켓 생성 (비밀번호 노출 0% Opaque Random Token)
       const handleGenerateInviteTicket = async () => {
         try {
@@ -1583,12 +1499,6 @@
             isInitialCloudLoadedRef.current = true;
             showToast("✨ 보안 초대 링크로 접속되었습니다! (이 기기는 영구 자동 로그인됩니다)");
 
-            // 기기 생체인증 지원 시 등록 유도
-            if (window.PublicKeyCredential && !isBiometricSaved) {
-              setTimeout(() => {
-                handleRegisterBiometric();
-              }, 600);
-            }
           } else {
             setIsEntryChecking(false);
             setEntryErrorMsg(data.error || "유효하지 않거나 만료된 초대 링크입니다.");
@@ -2943,25 +2853,13 @@
                 </div>
               ) : (
                 <form onSubmit={handleEntryLogin} className="space-y-3">
-                  {/* Face ID / 지문 생체인증이 이미 저장되어 있는 경우 원터치 로그인 버튼 최우선 제공 */}
-                  {hasBiometricHardware && isBiometricSaved && (
-                    <button
-                      type="button"
-                      onClick={handleBiometricUnlock}
-                      className="w-full py-3.5 px-3 rounded-2xl bg-gradient-to-r from-pink-500 to-indigo-600 hover:opacity-95 keep-white text-sm font-black shadow-lg transition flex items-center justify-center gap-2 mb-2"
-                    >
-                      <span className="text-lg">👤</span>
-                      <span>Face ID / 지문으로 1초 만에 바로 열기</span>
-                    </button>
-                  )}
-
                   <div className="space-y-1.5">
                     <label className="block text-[11px] font-extrabold text-slate-300">
                       🔒 시작 페이지 접속 비밀번호
                     </label>
                     <input
                       type="password"
-                      autoFocus={!isBiometricSaved}
+                      autoFocus
                       value={entryPasswordInput}
                       onChange={(e) => setEntryPasswordInput(e.target.value)}
                       placeholder="지정된 접속 비밀번호를 입력하세요"
@@ -2975,18 +2873,6 @@
                     </div>
                   )}
 
-                  {hasBiometricHardware && (
-                    <label className="flex items-center gap-2 cursor-pointer text-[11px] text-slate-300 font-semibold select-none py-1">
-                      <input
-                        type="checkbox"
-                        checked={enableBiometricAfterLogin}
-                        onChange={(e) => setEnableBiometricAfterLogin(e.target.checked)}
-                        className="w-4 h-4 rounded border-slate-700 text-pink-500 focus:ring-0 cursor-pointer"
-                      />
-                      <span>다음 방문 시 Face ID / 지문으로 간편 로그인</span>
-                    </label>
-                  )}
-
                   <button
                     type="submit"
                     className="w-full py-3.5 rounded-2xl timeline-btn keep-white font-black text-sm shadow-lg transition flex items-center justify-center gap-1.5"
@@ -2994,17 +2880,6 @@
                     <span>🔓</span>
                     <span>비밀번호 확인 후 플래너 열기</span>
                   </button>
-
-                  {hasBiometricHardware && !isBiometricSaved && (
-                    <button
-                      type="button"
-                      onClick={handleBiometricUnlock}
-                      className="w-full py-2.5 px-3 rounded-2xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-black text-indigo-300 transition flex items-center justify-center gap-1.5"
-                    >
-                      <span>👤</span>
-                      <span>Face ID / 지문으로 열기</span>
-                    </button>
-                  )}
 
                   <div className="text-[11px] text-center text-slate-400 font-semibold space-y-0.5">
                     <div>✨ 인증된 기기(스마트폰·태블릿·PC)는 간편하게 유지됩니다</div>
@@ -4530,24 +4405,6 @@
                   </p>
                 </button>
 
-                {/* 👤 Face ID / 지문 생체인증 등록 */}
-                {hasBiometricHardware && (
-                  <button
-                    type="button"
-                    onClick={handleRegisterBiometric}
-                    className="w-full p-3.5 rounded-2xl bg-indigo-500/15 border border-indigo-500/40 text-left"
-                  >
-                    <div className="text-xs font-extrabold text-indigo-300 flex items-center justify-between">
-                      <span>👤 Face ID / 지문 생체인증 등록</span>
-                      <span className="text-[10px] text-indigo-400 font-bold">
-                        {isBiometricSaved ? "등록 완료" : "간편 열기"}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
-                      기기에 생체인증을 등록해두면 비밀번호 대신 화면을 보거나 손가락 터치만으로 1초 만에 플래너를 엽니다.
-                    </p>
-                  </button>
-                )}
 
                 <button
                   onClick={() => {
