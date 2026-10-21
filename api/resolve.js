@@ -1,9 +1,11 @@
 /**
- * Vercel Serverless Function: /api/resolve
+ * Vercel Serverless Function: /api/resolve (Security-Hardened v2)
  *
- * 1) 핸드폰 구글맵 앱 '공유하기 → 링크 복사' (maps.app.goo.gl/?g_st=ic, 텍스트+링크 혼합 문자열 등) 완벽 해석
- * 2) PC / 모바일 단축 링크 2단계 추적 및 Google Maps HTML 메타데이터(og:image staticmap %2C, og:title, APP_INITIALIZATION_STATE 등) 정밀 파싱
- * 3) 한국어 · 일본어 · 영어 다국어 자동 변환 및 글로벌 지오코더(Photon / ArcGIS / Nominatim) 통합 검색
+ * 보안 패치 적용 내역:
+ * 1) SSRF(서버 측 요청 위조) 원천 차단: 허용된 Google Maps 도메인 화이트리스트만 요청 허용 및 사설 IP/내부망 차단
+ * 2) 리다이렉트(Redirect) 단계별 호스트 검증 (manual redirect + 최대 5홉 제한)
+ * 3) 외부 요청 타임아웃(5초) 및 응답 본문 최대 크기(512KB) 제한 (DoS 방어)
+ * 4) IP 기반 레이트 리미팅 (분당 최대 35회) 및 내부 에러 메시지 비노출
  */
 
 const BROWSER_HEADERS = {
@@ -16,14 +18,124 @@ const BROWSER_HEADERS = {
     "SOCS=CAISHAgBEhJnd3NfMjAyNDA1MTUtMF9SQzIaAmtvIAEaBgiA_LyaBg; CONSENT=YES+cb.20240101-01-p0.ko+FX+999",
 };
 
+// 🔒 SSRF 방어를 위한 엄격한 Google Maps 도메인 화이트리스트
+const ALLOWED_GOOGLE_HOSTS = new Set([
+  "maps.app.goo.gl",
+  "goo.gl",
+  "google.com",
+  "www.google.com",
+  "maps.google.com",
+  "google.co.kr",
+  "www.google.co.kr",
+  "maps.google.co.kr",
+  "google.co.jp",
+  "www.google.co.jp",
+  "maps.google.co.jp",
+  "consent.google.com",
+  "consent.google.co.kr",
+  "consent.google.co.jp",
+]);
+
+const rateLimitMap = new Map();
+
+function getClientIp(req) {
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.length > 0) {
+    return xff.split(",")[0].trim();
+  }
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  let rec = rateLimitMap.get(ip);
+  if (!rec || now - rec.start > windowMs) {
+    rec = { start: now, count: 0 };
+  }
+  rec.count += 1;
+  rateLimitMap.set(ip, rec);
+
+  if (rateLimitMap.size > 2000) {
+    for (const [k, v] of rateLimitMap.entries()) {
+      if (now - v.start > windowMs) rateLimitMap.delete(k);
+    }
+  }
+  return rec.count <= 35;
+}
+
 /**
- * 입력 문자열에서 URL과 앞뒤 힌트 텍스트(모바일 구글맵 공유 시 붙는 가게 이름/주소)를 분리
+ * 🛡️ SSRF 방지: 오직 공식 Google Maps / goo.gl 단축 URL 도메인만 허용
  */
+function isAllowedGoogleMapsUrl(urlStr) {
+  if (!urlStr || typeof urlStr !== "string" || urlStr.length > 2048) return false;
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+    if (parsed.username || parsed.password) return false;
+    if (parsed.port && parsed.port !== "80" && parsed.port !== "443") return false;
+    const host = parsed.hostname.toLowerCase();
+    return ALLOWED_GOOGLE_HOSTS.has(host);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 🛡️ 안전한 리다이렉트 추적기 (매 홉마다 호스트 화이트리스트 재검증 + 타임아웃 + 본문 크기 제한)
+ */
+async function safeFetchGoogleMaps(initialUrl, maxHops = 5) {
+  let currentUrl = initialUrl;
+  let hops = 0;
+
+  while (hops < maxHops) {
+    if (!isAllowedGoogleMapsUrl(currentUrl)) {
+      throw new Error("Blocked non-whitelisted redirect host");
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(currentUrl, {
+        method: "GET",
+        redirect: "manual",
+        headers: BROWSER_HEADERS,
+        signal: controller.signal,
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const locationHeader = response.headers.get("location");
+        if (!locationHeader) break;
+        const resolvedNext = new URL(locationHeader, currentUrl).toString();
+        if (!isAllowedGoogleMapsUrl(resolvedNext)) {
+          // 구글맵 리다이렉트 URL 자체에 좌표가 들어있는 경우가 있으므로 URL만 보존하고 중단
+          currentUrl = resolvedNext;
+          break;
+        }
+        currentUrl = resolvedNext;
+        hops += 1;
+        continue;
+      }
+
+      const rawText = await response.text();
+      return {
+        finalUrl: response.url || currentUrl,
+        html: rawText.slice(0, 512000), // 최대 512KB까지만 파싱하여 메모리 고갈 방지
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { finalUrl: currentUrl, html: "" };
+}
+
 function splitInputUrlAndHint(raw) {
   if (!raw || typeof raw !== "string") {
     return { cleanUrl: null, textHint: "" };
   }
-  const trimmed = raw.trim();
+  const trimmed = raw.trim().slice(0, 1000);
   const urlMatch = trimmed.match(/(https?:\/\/[^\s"'<>]+)/i);
   if (!urlMatch) {
     return { cleanUrl: null, textHint: trimmed };
@@ -51,6 +163,15 @@ function decodeHtmlEntities(str) {
     .replace(/\\u003d/g, "=");
 }
 
+function sanitizePlainText(str, maxLen = 200) {
+  if (!str || typeof str !== "string") return "";
+  return str
+    .replace(/[<>]/g, "")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .trim()
+    .slice(0, maxLen);
+}
+
 function isValidLatLng(lat, lng) {
   return (
     typeof lat === "number" &&
@@ -63,9 +184,6 @@ function isValidLatLng(lat, lng) {
   );
 }
 
-/**
- * URL 문자열 및 HTML 본문에서 위도/경도, 장소명, 주소를 다각도로 추출
- */
 function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
   let lat = null;
   let lng = null;
@@ -75,19 +193,18 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
   const decodedUrl = (() => {
     try {
       return decodeURIComponent(urlStr || "");
-    } catch (e) {
+    } catch {
       return urlStr || "";
     }
   })();
 
-  // Google Consent 리다이렉트 URL인 경우 내부 continue URL 추출
   let effectiveUrl = urlStr || "";
   if (effectiveUrl.includes("consent.google.") && effectiveUrl.includes("continue=")) {
     const contMatch = effectiveUrl.match(/[?&]continue=([^&]+)/i);
     if (contMatch) {
       try {
         effectiveUrl = decodeURIComponent(contMatch[1]);
-      } catch (e) {
+      } catch {
         effectiveUrl = contMatch[1];
       }
     }
@@ -96,12 +213,9 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
   const combinedSource = `${effectiveUrl}\n${decodedUrl}\n${decodeHtmlEntities(html)}`;
   let decodedSource = combinedSource;
   try {
-    decodedSource =combinedSource.replace(/%2C/gi, ",").replace(/%3A/gi, ":");
-  } catch (e) {
-    // ignore
-  }
+    decodedSource = combinedSource.replace(/%2C/gi, ",").replace(/%3A/gi, ":");
+  } catch {}
 
-  // 1. 가장 정확한 실제 핀 좌표: !3d위도!4d경도
   const bangMatch = decodedSource.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
   if (bangMatch) {
     const cLat = parseFloat(bangMatch[1]);
@@ -112,7 +226,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
     }
   }
 
-  // 2. og:image 등의 staticmap?center=위도,경도 (%2C 인코딩 포함)
   if (!isValidLatLng(lat, lng)) {
     const centerMatch = decodedSource.match(
       /center=(-?\d+\.\d+)(?:,|%2C)(-?\d+\.\d+)/i
@@ -127,7 +240,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
     }
   }
 
-  // 3. URL 경로의 /@위도,경도
   if (!isValidLatLng(lat, lng)) {
     const atMatch = decodedSource.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
     if (atMatch) {
@@ -140,7 +252,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
     }
   }
 
-  // 4. 쿼리 파라미터 q=위도,경도 / query=위도,경도 / ll=위도,경도 / daddr=위도,경도
   if (!isValidLatLng(lat, lng)) {
     const qCoordMatch = decodedSource.match(
       /[?&](?:q|query|ll|sll|daddr|destination|viewpoint)=(-?\d+\.\d+)[,+\s]+(-?\d+\.\d+)/i
@@ -155,7 +266,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
     }
   }
 
-  // 5. Google Maps 내부 JSON 배열 [null,null,위도,경도]
   if (!isValidLatLng(lat, lng) && html) {
     const jsonCoordMatch = decodedSource.match(
       /\[null,null,(-?\d+\.\d{4,}),(-?\d+\.\d{4,})\]/
@@ -170,7 +280,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
     }
   }
 
-  // 6. Google Maps APP_INITIALIZATION_STATE의 [거리, 경도(122~154), 위도(24~46)] 패턴
   if (!isValidLatLng(lat, lng) && html) {
     const initMatch = decodedSource.match(
       /\[\d+\.\d+,(1[2-5]\d\.\d{4,}),([2-4]\d\.\d{4,})\]/
@@ -185,8 +294,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
     }
   }
 
-  // --- 장소명(name) 및 주소(address) 추출 ---
-  // A. URL의 /maps/place/장소명 또는 /maps/search/장소명
   const placeMatch = effectiveUrl.match(/\/maps\/(?:place|search)\/([^/@?&]+)/i);
   if (placeMatch && placeMatch[1]) {
     try {
@@ -194,12 +301,9 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
       if (candidate && !/^(-?\d+\.\d+),(-?\d+\.\d+)$/.test(candidate)) {
         name = candidate;
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch {}
   }
 
-  // B. URL 쿼리 파라미터 ?q=장소명 또는 ?query=장소명
   if (!name) {
     const qNameMatch = effectiveUrl.match(/[?&](?:q|query)=([^&]+)/i);
     if (qNameMatch && qNameMatch[1]) {
@@ -208,13 +312,10 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
         if (candidate && !/^(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)$/.test(candidate)) {
           name = candidate;
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch {}
     }
   }
 
-  // C. HTML <meta property="og:title"> 또는 <meta itemprop="name"> (속성 순서 무관!)
   if (html) {
     const metaTitleRegexes = [
       /<meta[^>]+(?:property=["']og:title["']|itemprop=["']name["'])[^>]+content=["']([^"']+)["']/i,
@@ -232,7 +333,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
           rawTitle !== "Google 지도" &&
           !rawTitle.startsWith("http")
         ) {
-          // "가게이름 · 주소" 형태인 경우 분리
           if (rawTitle.includes(" · ")) {
             const parts = rawTitle.split(" · ").map((s) => s.trim()).filter(Boolean);
             if (!name && parts[0]) name = parts[0];
@@ -245,7 +345,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
       }
     }
 
-    // D. HTML <meta property="og:description"> 또는 <meta itemprop="description">
     if (!address) {
       const metaDescRegexes = [
         /<meta[^>]+(?:property=["']og:description["']|itemprop=["']description["'])[^>]+content=["']([^"']+)["']/i,
@@ -263,7 +362,6 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
       }
     }
 
-    // E. <title>장소명 - Google 지도</title>
     if (!name) {
       const titleTag = html.match(/<title[^>]*>([^<]+)<\/title>/i);
       if (titleTag && titleTag[1]) {
@@ -290,81 +388,76 @@ function parseGoogleMapData(urlStr, html = "", fallbackHint = "") {
   return {
     lat: isValidLatLng(lat, lng) ? lat : null,
     lng: isValidLatLng(lat, lng) ? lng : null,
-    name: name || null,
-    address: address || null,
+    name: sanitizePlainText(name, 120) || null,
+    address: sanitizePlainText(address, 250) || null,
   };
 }
 
-/**
- * HTML 내부에 2차 이동 URL(meta refresh, window.location, google.com/maps 링크)이 있으면 추출
- */
 function extractSecondStageMapUrl(html) {
   if (!html) return null;
   const decoded = decodeHtmlEntities(html);
 
-  // 1) meta http-equiv="refresh" content="0;url=..."
   const refreshMatch = decoded.match(/url=["']?(https?:\/\/[^"'\s>]+)/i);
-  if (refreshMatch && refreshMatch[1]) {
+  if (refreshMatch && refreshMatch[1] && isAllowedGoogleMapsUrl(refreshMatch[1])) {
     return refreshMatch[1];
   }
 
-  // 2) google.com/maps/place/... 또는 google.com/maps?... 링크
   const gmapMatch = decoded.match(
     /(https?:\/\/(?:www\.|maps\.)?google\.(?:com|co\.jp|co\.kr)\/maps[^\s"'<>\\]+)/i
   );
-  if (gmapMatch && gmapMatch[1]) {
+  if (gmapMatch && gmapMatch[1] && isAllowedGoogleMapsUrl(gmapMatch[1])) {
     return gmapMatch[1];
   }
 
   return null;
 }
 
-/**
- * Google Maps Embed 페이지를 통해 장소명/ 주소의 좌표를 보조 추출
- */
 async function tryExtractFromGoogleEmbed(queryText) {
   if (!queryText) return null;
   try {
     const embedUrl = `https://maps.google.com/maps?q=${encodeURIComponent(
       queryText
     )}&output=embed&hl=ko`;
-    const res = await fetch(embedUrl, {
-      headers: BROWSER_HEADERS,
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    const parsed = parseGoogleMapData(embedUrl, html, queryText);
-    if (isValidLatLng(parsed.lat, parsed.lng)) {
-      return parsed;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    try {
+      const res = await fetch(embedUrl, {
+        headers: BROWSER_HEADERS,
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      const html = (await res.text()).slice(0, 256000);
+      const parsed = parseGoogleMapData(embedUrl, html, queryText);
+      if (isValidLatLng(parsed.lat, parsed.lng)) {
+        return parsed;
+      }
+    } finally {
+      clearTimeout(timer);
     }
-  } catch (e) {
-    // ignore
-  }
+  } catch {}
   return null;
 }
 
-/**
- * 다국어 번역 (한국어 -> 일본어, 영어)
- */
 async function translateQuery(text, targetLang) {
   try {
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
-      text
+      text.slice(0, 120)
     )}&langpair=ko|${targetLang}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data && data.responseData && data.responseData.translatedText) {
-      return data.responseData.translatedText.trim();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      const data = await res.json();
+      if (data && data.responseData && data.responseData.translatedText) {
+        return sanitizePlainText(data.responseData.translatedText, 120);
+      }
+    } finally {
+      clearTimeout(timer);
     }
-  } catch (e) {
-    // ignore
-  }
+  } catch {}
   return null;
 }
 
-/**
- * 다중 글로벌 지오코딩 엔진 (Photon + ArcGIS + Nominatim)
- */
 async function searchMultiGeocoder(queries) {
   const results = [];
   const seenKeys = new Set();
@@ -374,13 +467,16 @@ async function searchMultiGeocoder(queries) {
     const key = `${item.lat.toFixed(4)}_${item.lng.toFixed(4)}`;
     if (seenKeys.has(key)) return;
     seenKeys.add(key);
-    results.push(item);
+    results.push({
+      ...item,
+      name: sanitizePlainText(item.name, 120),
+      address: sanitizePlainText(item.address, 250),
+    });
   };
 
   for (const q of queries) {
     if (!q || q.startsWith("http")) continue;
 
-    // 1. ArcGIS World Geocoder (한국어/일본어/영어 상호명 및 주소 검색에 매우 강력)
     try {
       const arcUrl = `https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(
         q
@@ -403,9 +499,8 @@ async function searchMultiGeocoder(queries) {
           }
         });
       }
-    } catch (e) {}
+    } catch {}
 
-    // 2. Photon (Komoot) OpenStreetMap 검색
     try {
       const pUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(
         q
@@ -430,9 +525,8 @@ async function searchMultiGeocoder(queries) {
           }
         });
       }
-    } catch (e) {}
+    } catch {}
 
-    // 3. OpenStreetMap Nominatim
     try {
       const nUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
         q
@@ -450,7 +544,7 @@ async function searchMultiGeocoder(queries) {
           });
         });
       }
-    } catch (e) {}
+    } catch {}
 
     if (results.length >= 6) break;
   }
@@ -459,6 +553,9 @@ async function searchMultiGeocoder(queries) {
 }
 
 module.exports = async function handler(req, res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -467,20 +564,26 @@ module.exports = async function handler(req, res) {
     return res.status(200).end();
   }
 
+  if (req.method !== "GET") {
+    return res.status(405).json({ resolved: false, error: "Method not allowed" });
+  }
+
+  const clientIp = getClientIp(req);
+  if (!checkRateLimit(clientIp)) {
+    return res.status(429).json({
+      resolved: false,
+      error: "검색 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+    });
+  }
+
   const { url, q, hint } = req.query;
-  const rawInput = (url || q || "").trim();
+  const rawInput = String(url || q || "").trim().slice(0, 1000);
   const { cleanUrl: targetUrl, textHint } = splitInputUrlAndHint(rawInput);
-  const combinedHint = (hint || textHint || "").trim();
+  const combinedHint = sanitizePlainText(hint || textHint || "", 150);
 
   try {
-    // 1. Google Maps URL (모바일 단축 링크 maps.app.goo.gl / goo.gl / google.com/maps 등) 해석
-    if (
-      targetUrl &&
-      (targetUrl.includes("google.") ||
-        targetUrl.includes("goo.gl") ||
-        targetUrl.includes("maps.app"))
-    ) {
-      // 1-A. 입력된 URL 자체에 이미 좌표가 있는지 확인
+    // 1. Google Maps URL (오직 화이트리스트를 통과한 공식 도메인만 SSRF 없이 안전하게 추적)
+    if (targetUrl && isAllowedGoogleMapsUrl(targetUrl)) {
       const directParsed = parseGoogleMapData(targetUrl, "", combinedHint);
       if (isValidLatLng(directParsed.lat, directParsed.lng)) {
         const item = {
@@ -498,41 +601,29 @@ module.exports = async function handler(req, res) {
         });
       }
 
-      // 1-B. 서버에서 단축 URL 리다이렉트 추적 (1단계 + 2단계)
       let finalUrl = targetUrl;
       let html = "";
       try {
-        const response = await fetch(targetUrl, {
-          method: "GET",
-          redirect: "follow",
-          headers: BROWSER_HEADERS,
-        });
-        finalUrl = response.url || targetUrl;
-        html = await response.text();
+        const stage1 = await safeFetchGoogleMaps(targetUrl, 5);
+        finalUrl = stage1.finalUrl || targetUrl;
+        html = stage1.html || "";
 
-        // 만약 여전히 단축 도메인이거나 HTML 내에 2차 구글맵 URL이 숨어 있다면 한 번 더 추적
         const secondUrl = extractSecondStageMapUrl(html);
         if (
           secondUrl &&
+          isAllowedGoogleMapsUrl(secondUrl) &&
           (finalUrl.includes("goo.gl") ||
             finalUrl.includes("maps.app") ||
             finalUrl.includes("consent.google"))
         ) {
-          const response2 = await fetch(secondUrl, {
-            method: "GET",
-            redirect: "follow",
-            headers: BROWSER_HEADERS,
-          });
-          finalUrl = response2.url || secondUrl;
-          html = await response2.text();
+          const stage2 = await safeFetchGoogleMaps(secondUrl, 4);
+          finalUrl = stage2.finalUrl || secondUrl;
+          html = stage2.html || "";
         }
-      } catch (fetchErr) {
-        // 네트워크 에러 시 아래 지오코딩 폴백으로 진행
-      }
+      } catch {}
 
       const finalParsed = parseGoogleMapData(finalUrl, html, combinedHint);
 
-      // 좌표가 바로 추출된 경우 즉시 반환!
       if (isValidLatLng(finalParsed.lat, finalParsed.lng)) {
         const item = {
           name: finalParsed.name || combinedHint || "구글맵 공유 장소",
@@ -549,7 +640,6 @@ module.exports = async function handler(req, res) {
         });
       }
 
-      // 1-C. 모바일 공유 링크가 좌표 없이 장소명/주소만 포함한 URL(/maps/place/장소명/data=!4m2...)로 리다이렉트된 경우!
       const candidateNames = [
         finalParsed.name,
         combinedHint,
@@ -561,7 +651,6 @@ module.exports = async function handler(req, res) {
         .map((s) => (s || "").trim())
         .filter((s) => s && !s.startsWith("http"));
 
-      // Google Embed 페이지에서 좌표 추출 시도
       for (const cand of candidateNames) {
         const embedResolved = await tryExtractFromGoogleEmbed(cand);
         if (embedResolved && isValidLatLng(embedResolved.lat, embedResolved.lng)) {
@@ -581,7 +670,6 @@ module.exports = async function handler(req, res) {
         }
       }
 
-      // 지오코더(ArcGIS / Photon / Nominatim + 다국어 번역)로 추출된 장소명 검색! (절대 원본 단축 URL을 검색하지 않음)
       if (candidateNames.length > 0) {
         const primaryName = candidateNames[0];
         const [jaTrans, enTrans] = await Promise.all([
@@ -612,17 +700,16 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // 2. 일반 키워드 검색 (한국어 / 일본어 / 영어 다국어 자동 검색)
-    const searchQuery = (q || combinedHint || rawInput || "").trim();
+    // 2. 일반 키워드 검색
+    const searchQuery = sanitizePlainText(q || combinedHint || rawInput || "", 120);
     if (!searchQuery || searchQuery.startsWith("http")) {
       return res.status(200).json({
         resolved: false,
         results: [],
-        message: "유효한 장소명이나 좌표를 찾지 못했습니다.",
+        message: "유효한 장소명이나 구글맵 공식 링크를 입력해주세요.",
       });
     }
 
-    // Google Embed에서도 1순위 좌표 후보 확인
     const [embedHit, jaTranslated, enTranslated] = await Promise.all([
       tryExtractFromGoogleEmbed(`${searchQuery} 일본`),
       translateQuery(searchQuery, "ja"),
@@ -660,10 +747,10 @@ module.exports = async function handler(req, res) {
       translated: { ja: jaTranslated, en: enTranslated },
       results,
     });
-  } catch (err) {
+  } catch {
     return res.status(500).json({
       resolved: false,
-      error: err.message,
+      error: "장소 검색 처리 중 일시적인 오류가 발생했습니다.",
     });
   }
 };

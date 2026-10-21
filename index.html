@@ -17,9 +17,6 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Supabase Realtime Client (couple-calendar-new 실시간 동기화 엔진) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
   <!-- Pretendard Font -->
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 
@@ -249,7 +246,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
 
-    // 🔒 영구 고정 저장소 키
+    // 🔒 영구 고정 저장소 키 및 보안 스냅샷 금고 키
     const STORAGE_KEY_PINS = "travel_planner_master_pins";
     const STORAGE_KEY_TITLE = "travel_planner_master_title";
     const STORAGE_KEY_RATE = "travel_planner_master_rate";
@@ -257,17 +254,80 @@
     const STORAGE_KEY_CHECKLIST = "travel_planner_master_checklist";
     const STORAGE_KEY_THEME = "travel_planner_master_theme";
     const STORAGE_KEY_MASTER_V6 = "japan_trip_v6_master_local";
+    const STORAGE_KEY_SECURITY_SNAPSHOT = "travel_planner_security_vault_v1";
+    const STORAGE_KEY_AUTH_PIN = "travel_planner_auth_pin_v1";
 
-    // 🔗 couple-calendar-new (https://github.com/azabudaihillz-hue/couple-calendar-new) 실시간 동기화 설정
-    const SUPABASE_URL = "https://abjspnuohxouufkdjefs.supabase.co";
-    const SUPABASE_ANON_KEY =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFianNwbnVvaHhvdXVma2RqZWZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMDA5NzcsImV4cCI6MjEwNDg3Njk3N30.hVL3TRPwA1xalf1Tb2LiKJ58Q_DgBc5RWwFs2AfR890";
-    const SUPABASE_SYNC_KEY = "JAPAN_TRAVEL_PLANNER_635";
-    const supabaseClient =
-      typeof window !== "undefined" && window.supabase && window.supabase.createClient
-        ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-        : null;
+    // 🛡️ 보안 패치: 프론트엔드에 DB 접속 키를 일절 포함하지 않고 /api/sync 보안 게이트웨이를 통해서만 통신
     const CLIENT_ID = "device-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now();
+    const CSRF_HEADER_VALUE = "SmartTravelPlanner-v2";
+
+    // 🛡️ XSS(교차 사이트 스크립팅) 방어를 위한 HTML 이스케이프 함수 (지도 팝업/툴팁 보호)
+    function escapeHtml(raw) {
+      if (raw === null || raw === undefined) return "";
+      return String(raw)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function cleanSafeText(val, maxLen = 200, fallback = "") {
+      if (typeof val !== "string") return fallback;
+      return val
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+        .trim()
+        .slice(0, maxLen);
+    }
+
+    function sanitizePinList(rawPins) {
+      if (!Array.isArray(rawPins)) return [];
+      const safePins = [];
+      for (const p of rawPins.slice(0, 100)) {
+        if (!p || typeof p !== "object") continue;
+        const lat = Number(p.lat);
+        const lng = Number(p.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+
+        const items = Array.isArray(p.items)
+          ? p.items
+              .slice(0, 100)
+              .filter((it) => it && typeof it === "object")
+              .map((it, i) => ({
+                id: cleanSafeText(String(it.id || `item-${i}`), 64, `item-${i}`).replace(
+                  /[^a-zA-Z0-9_-]/g,
+                  ""
+                ),
+                title: cleanSafeText(it.title, 100, "지출 항목"),
+                price: Math.max(0, Math.min(1000000000, Math.round(Number(it.price) || 0))),
+                yen: Math.max(0, Math.min(100000000, Math.round(Number(it.yen) || 0))),
+                bought: Boolean(it.bought)
+              }))
+          : [];
+
+        safePins.push({
+          id: cleanSafeText(String(p.id || `pin-${Date.now()}`), 64, `pin-${Date.now()}`).replace(
+            /[^a-zA-Z0-9_-]/g,
+            ""
+          ),
+          name: cleanSafeText(p.name, 120, "여행 장소"),
+          category: cleanSafeText(p.category, 40, "📸 명소·포토존"),
+          address: cleanSafeText(p.address, 300, ""),
+          lat,
+          lng,
+          completed: Boolean(p.completed),
+          memo: typeof p.memo === "string" ? p.memo.slice(0, 2000) : "",
+          customTransitMinutes:
+            p.customTransitMinutes !== null && p.customTransitMinutes !== undefined
+              ? Math.max(0, Math.min(10000, Math.round(Number(p.customTransitMinutes) || 0))) || null
+              : null,
+          spendInfo: p.spendInfo && typeof p.spendInfo === "object" ? p.spendInfo : null,
+          items
+        });
+      }
+      return safePins;
+    }
 
     const DEFAULT_NOTE_PAD = [
       {
@@ -294,16 +354,19 @@
       try {
         const masterData = localStorage.getItem(STORAGE_KEY_PINS);
         if (masterData) {
-          const parsed = JSON.parse(masterData);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          const parsed = sanitizePinList(JSON.parse(masterData));
+          if (parsed.length > 0) return parsed;
         }
 
         const v6Raw = localStorage.getItem(STORAGE_KEY_MASTER_V6);
         if (v6Raw) {
           const parsedV6 = JSON.parse(v6Raw);
-          if (parsedV6 && Array.isArray(parsedV6.pins) && parsedV6.pins.length > 0) {
-            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(parsedV6.pins));
-            return parsedV6.pins;
+          if (parsedV6 && Array.isArray(parsedV6.pins)) {
+            const safeV6 = sanitizePinList(parsedV6.pins);
+            if (safeV6.length > 0) {
+              localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(safeV6));
+              return safeV6;
+            }
           }
         }
 
@@ -325,8 +388,8 @@
           const raw = localStorage.getItem(key);
           if (!raw) continue;
           try {
-            const arr = JSON.parse(raw);
-            if (!Array.isArray(arr) || arr.length === 0) continue;
+            const arr = sanitizePinList(JSON.parse(raw));
+            if (arr.length === 0) continue;
             const hasUserCreatedPin = arr.some(
               (p) =>
                 p &&
@@ -347,10 +410,10 @@
 
     function loadSavedTitleWithMigration() {
       const master = localStorage.getItem(STORAGE_KEY_TITLE);
-      if (master) return master;
+      if (master) return cleanSafeText(master, 80, "우리의 일본 여행 ✈️");
       for (let i = 13; i >= 4; i--) {
         const old = localStorage.getItem(`travel_planner_title_v${i}`);
-        if (old && old !== "여행 계획") return old;
+        if (old && old !== "여행 계획") return cleanSafeText(old, 80, "우리의 일본 여행 ✈️");
       }
       return "우리의 일본 여행 ✈️";
     }
@@ -691,7 +754,7 @@
       });
       const [newCheckText, setNewCheckText] = useState("");
 
-      // ☁️ 실시간 클라우드 동기화 상태 (couple-calendar-new Supabase 연동)
+      // ☁️ 실시간 클라우드 동기화 상태 (/api/sync 보안 게이트웨이 연동)
       const [syncStatus, setSyncStatus] = useState("connecting"); // connecting | synced | saving | offline
       const [lastSyncedTime, setLastSyncedTime] = useState("");
       const isInitialCloudLoadedRef = useRef(false);
@@ -823,8 +886,71 @@
       }, [checklist]);
 
       // =========================================================================
-      // ☁️ couple-calendar-new 의 Supabase 실시간 동기화 엔진 (WebSocket + REST)
+      // 🛡️ 보안 강화된 클라우드 동기화 엔진 (/api/sync 서버 게이트웨이 + PIN 잠금 + 스냅샷 금고)
       // =========================================================================
+      const [isCloudLocked, setIsCloudLocked] = useState(false);
+      const [isPinVerified, setIsPinVerified] = useState(false);
+      const [savedAuthPin, setSavedAuthPin] = useState(
+        () => localStorage.getItem(STORAGE_KEY_AUTH_PIN) || ""
+      );
+      const [pinInput, setPinInput] = useState("");
+      const [newPinInput, setNewPinInput] = useState("");
+      const savedAuthPinRef = useRef(savedAuthPin);
+
+      useEffect(() => {
+        savedAuthPinRef.current = savedAuthPin;
+        if (savedAuthPin) {
+          localStorage.setItem(STORAGE_KEY_AUTH_PIN, savedAuthPin);
+        } else {
+          localStorage.removeItem(STORAGE_KEY_AUTH_PIN);
+        }
+      }, [savedAuthPin]);
+
+      const saveSecuritySnapshot = (stateToBackup, reason = "auto") => {
+        try {
+          if (!stateToBackup || !Array.isArray(stateToBackup.pins) || stateToBackup.pins.length === 0) {
+            return;
+          }
+          const snapshot = {
+            pins: sanitizePinList(stateToBackup.pins),
+            tripTitle: cleanSafeText(stateToBackup.tripTitle, 80, "우리의 일본 여행 ✈️"),
+            exchangeRate: Number(stateToBackup.exchangeRate) || 9.05,
+            peopleCount: Number(stateToBackup.peopleCount) || 2,
+            notes: Array.isArray(stateToBackup.notes) ? stateToBackup.notes : DEFAULT_NOTE_PAD,
+            checklist: Array.isArray(stateToBackup.checklist) ? stateToBackup.checklist : [],
+            savedAt: new Date().toLocaleString("ko-KR"),
+            reason
+          };
+          localStorage.setItem(STORAGE_KEY_SECURITY_SNAPSHOT, JSON.stringify(snapshot));
+        } catch (e) {}
+      };
+
+      const handleRestoreSecuritySnapshot = () => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_SECURITY_SNAPSHOT);
+          if (!raw) {
+            showToast("이 기기에 저장된 보안 스냅샷 백업이 아직 없습니다.");
+            return;
+          }
+          const snap = JSON.parse(raw);
+          const safePins = sanitizePinList(snap.pins);
+          if (safePins.length === 0) {
+            showToast("보안 스냅샷에 복원할 코스가 없습니다.");
+            return;
+          }
+          setPins(safePins);
+          if (snap.tripTitle) setTripTitle(cleanSafeText(snap.tripTitle, 80, "우리의 일본 여행 ✈️"));
+          if (snap.exchangeRate) setExchangeRate(Number(snap.exchangeRate) || 9.05);
+          if (Array.isArray(snap.notes) && snap.notes.length > 0) setNotes(snap.notes);
+          if (Array.isArray(snap.checklist) && snap.checklist.length > 0) setChecklist(snap.checklist);
+          setSelectedPinId(safePins[0]?.id || null);
+          setShowResetModal(false);
+          showToast(`🛡️ 보안 금고(${snap.savedAt || "최근"})에서 코스 ${safePins.length}곳을 복구했습니다!`);
+        } catch (e) {
+          showToast("⚠️ 보안 스냅샷 복구 중 오류가 발생했습니다.");
+        }
+      };
+
       const hasLocalMeaningfulData = (stateObj) => {
         if (!stateObj) return false;
         if (Array.isArray(stateObj.pins) && stateObj.pins.length > 0) return true;
@@ -840,6 +966,10 @@
       const applyRemotePayload = (remote, isManual = false) => {
         if (!remote || typeof remote !== "object") return false;
 
+        if (typeof remote.isLocked === "boolean") {
+          setIsCloudLocked(remote.isLocked);
+        }
+
         const remoteUpdatedAt = Number(remote.updatedAt || 0);
         if (
           !isManual &&
@@ -852,10 +982,18 @@
         }
 
         const currentLocal = latestStateRef.current;
-        const remotePins = Array.isArray(remote.pins) ? remote.pins : [];
+        const remotePins = sanitizePinList(remote.pins);
 
-        // 핵심 보호 로직: 만약 클라우드 데이터가 비어 있는데 내 기기(예: 맥북)에 기존 핀이나 메모가 있다면,
-        // 빈 데이터로 덮어쓰지 않고 내 기기의 데이터를 즉시 클라우드로 업로드하여 모든 폰에 전파!
+        // 🛡️ 만약 원격 데이터로 인해 내 기기의 코스가 줄어들거나 비워지기 직전이라면 자동으로 보안 스냅샷 금고에 백업!
+        if (
+          Array.isArray(currentLocal.pins) &&
+          currentLocal.pins.length > remotePins.length &&
+          currentLocal.pins.length > 0
+        ) {
+          saveSecuritySnapshot(currentLocal, "before-remote-sync");
+        }
+
+        // 핵심 보호 로직: 클라우드 데이터가 비어 있는데 내 기기에 기존 핀이나 메모가 있다면 덮어쓰지 않고 업로드
         if (
           remotePins.length === 0 &&
           !remote.explicitlyCleared &&
@@ -876,19 +1014,27 @@
         lastUpdatedAtRef.current = remoteUpdatedAt || Date.now();
 
         if (Array.isArray(remote.pins)) {
-          setPins(remote.pins);
-          if (remote.pins.length > 0) {
+          setPins(remotePins);
+          if (remotePins.length > 0) {
             setSelectedPinId((prevId) =>
-              remote.pins.some((p) => p.id === prevId) ? prevId : remote.pins[0].id
+              remotePins.some((p) => p.id === prevId) ? prevId : remotePins[0].id
             );
           }
         }
-        if (remote.tripTitle) setTripTitle(remote.tripTitle);
-        if (remote.exchangeRate) setExchangeRate(Number(remote.exchangeRate));
-        if (remote.peopleCount) setPeopleCount(Number(remote.peopleCount));
-        if (Array.isArray(remote.notes) && remote.notes.length > 0) setNotes(remote.notes);
+        if (remote.tripTitle) {
+          setTripTitle(cleanSafeText(remote.tripTitle, 80, "우리의 일본 여행 ✈️"));
+        }
+        if (remote.exchangeRate) {
+          setExchangeRate(Math.max(0.5, Math.min(100, Number(remote.exchangeRate) || 9.05)));
+        }
+        if (remote.peopleCount) {
+          setPeopleCount(Math.max(1, Math.min(50, Math.round(Number(remote.peopleCount) || 2))));
+        }
+        if (Array.isArray(remote.notes) && remote.notes.length > 0) {
+          setNotes(remote.notes.slice(0, 30));
+        }
         if (Array.isArray(remote.checklist) && remote.checklist.length > 0) {
-          setChecklist(remote.checklist);
+          setChecklist(remote.checklist.slice(0, 200));
         }
 
         setLastSyncedTime(
@@ -910,45 +1056,34 @@
       const fetchCloudData = async (isManual = false) => {
         try {
           if (isManual) setSyncStatus("connecting");
-          let remote = null;
-
-          // 1순위: couple-calendar-new 와 동일한 Supabase 직접 조회
-          if (supabaseClient) {
-            const { data: row, error } = await supabaseClient
-              .from("couple_calendar")
-              .select("*")
-              .eq("date", SUPABASE_SYNC_KEY)
-              .maybeSingle();
-
-            if (!error && row) {
-              if (row.hae_shift && typeof row.hae_shift === "object") {
-                remote = row.hae_shift;
-              } else if (row.hae_memo && typeof row.hae_memo === "string") {
-                try {
-                  remote = JSON.parse(row.hae_memo);
-                } catch (e) {}
-              }
+          const res = await fetch(`/api/sync?t=${Date.now()}`, {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              "X-Requested-With": CSRF_HEADER_VALUE
             }
+          });
+
+          if (!res.ok) {
+            throw new Error(`Sync GET failed: ${res.status}`);
           }
 
-          // 2순위: /api/sync 서버리스 엔드포인트 조회
-          if (!remote) {
-            const res = await fetch(`/api/sync?t=${Date.now()}`, { cache: "no-store" });
-            if (res.ok) {
-              const json = await res.json();
-              const candidate = json && json.data ? json.data : json;
-              if (candidate && !candidate.empty) {
-                remote = candidate;
-              }
-            }
+          const json = await res.json();
+          const remote = json && json.data ? json.data : json;
+
+          if (remote && typeof remote.isLocked === "boolean") {
+            setIsCloudLocked(remote.isLocked);
           }
 
           if (remote && !remote.empty) {
+            if (remote.clientId && remote.clientId === CLIENT_ID && !isManual) {
+              setSyncStatus("synced");
+              isInitialCloudLoadedRef.current = true;
+              return;
+            }
             applyRemotePayload(remote, isManual);
             isInitialCloudLoadedRef.current = true;
           } else {
-            // 클라우드에 아직 데이터가 없는 경우: 내 기기(맥북 등)에 데이터가 있을 때만 첫 기준점으로 업로드!
-            // (빈 핸드폰이 먼저 접속했을 때 빈 배열을 업로드하지 않도록 방지)
             isInitialCloudLoadedRef.current = true;
             const currentLocal = latestStateRef.current;
             if (hasLocalMeaningfulData(currentLocal)) {
@@ -964,11 +1099,15 @@
         }
       };
 
-      // ☁️ 2. 변경 사항을 Supabase (couple_calendar) 및 /api/sync 에 즉시 저장
+      // ☁️ 변경 사항을 보안 게이트웨이(/api/sync)에 저장
       const pushCloudData = async (customPayload, isForce = false) => {
         try {
           const base = customPayload || latestStateRef.current;
-          const pinsList = Array.isArray(base.pins) ? base.pins : [];
+          const pinsList = sanitizePinList(base.pins);
+
+          if (pinsList.length > 0) {
+            saveSecuritySnapshot({ ...base, pins: pinsList }, "local-edit");
+          }
 
           // 빈 기기가 실수로 클라우드를 덮어쓰지 않도록 보호
           if (
@@ -988,44 +1127,49 @@
 
           const payload = {
             pins: pinsList,
-            tripTitle: base.tripTitle || "우리의 일본 여행 ✈️",
-            exchangeRate: Number(base.exchangeRate) || 9.05,
-            peopleCount: Number(base.peopleCount) || 2,
-            notes: Array.isArray(base.notes) ? base.notes : DEFAULT_NOTE_PAD,
-            checklist: Array.isArray(base.checklist) ? base.checklist : [],
+            tripTitle: cleanSafeText(base.tripTitle, 80, "우리의 일본 여행 ✈️"),
+            exchangeRate: Math.max(0.5, Math.min(100, Number(base.exchangeRate) || 9.05)),
+            peopleCount: Math.max(1, Math.min(50, Math.round(Number(base.peopleCount) || 2))),
+            notes: Array.isArray(base.notes) ? base.notes.slice(0, 30) : DEFAULT_NOTE_PAD,
+            checklist: Array.isArray(base.checklist) ? base.checklist.slice(0, 200) : [],
             explicitlyCleared: Boolean(explicitlyClearedRef.current || base.explicitlyCleared),
             forceOverwrite: Boolean(isForce || base.forceOverwrite),
             updatedAt: nowTs,
-            clientId: CLIENT_ID
+            clientId: CLIENT_ID,
+            authPin: savedAuthPinRef.current || ""
           };
 
-          let savedOk = false;
+          const res = await fetch("/api/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": CSRF_HEADER_VALUE,
+              "X-Planner-Pin": savedAuthPinRef.current || ""
+            },
+            body: JSON.stringify(payload)
+          });
 
-          // 1순위: couple-calendar-new 와 동일한 Supabase 직접 Upsert (실시간 WebSocket 트리거)
-          if (supabaseClient) {
-            const { error } = await supabaseClient.from("couple_calendar").upsert(
-              {
-                date: SUPABASE_SYNC_KEY,
-                memo: "",
-                hae_shift: payload,
-                hae_memo: JSON.stringify(payload)
-              },
-              { onConflict: "date" }
+          if (res.status === 403) {
+            const errJson = await res.json().catch(() => ({}));
+            setIsCloudLocked(true);
+            setIsPinVerified(false);
+            setSyncStatus("synced");
+            showToast(
+              errJson.error ||
+                "🔒 보안 잠금이 켜져 있어 수정이 차단되었습니다. ⚙️ 설정에서 비밀번호를 입력해주세요!"
             );
-            if (!error) savedOk = true;
+            fetchCloudData(false);
+            return;
           }
 
-          // 2순위: /api/sync 백업 저장
-          try {
-            const res = await fetch("/api/sync", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload)
-            });
-            if (res.ok) savedOk = true;
-          } catch (apiErr) {}
-
-          if (savedOk) {
+          if (res.ok) {
+            const resJson = await res.json().catch(() => ({}));
+            if (typeof resJson.isLocked === "boolean") {
+              setIsCloudLocked(resJson.isLocked);
+              if (resJson.isLocked && savedAuthPinRef.current) {
+                setIsPinVerified(true);
+              }
+            }
             setLastSyncedTime(
               new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
             );
@@ -1041,39 +1185,128 @@
         }
       };
 
-      // 첫 실행 시 불러오기 + Supabase 실시간 WebSocket 구독 (couple-calendar-new 방식) + 포커스/백그라운드 동기화
+      // 🔒 보안 잠금(PIN) 설정 / 인증 / 해제 핸들러
+      const handleVerifySecurityPin = async () => {
+        const candidate = pinInput.trim();
+        if (!candidate) {
+          showToast("비밀번호를 입력해주세요.");
+          return;
+        }
+        try {
+          const res = await fetch("/api/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": CSRF_HEADER_VALUE,
+              "X-Planner-Pin": candidate
+            },
+            body: JSON.stringify({
+              action: "verifyPin",
+              authPin: candidate
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.verified) {
+            setSavedAuthPin(candidate);
+            setIsPinVerified(true);
+            setPinInput("");
+            showToast("🔓 보안 인증 완료! 이제 이 기기에서 자유롭게 일정을 수정할 수 있습니다.");
+          } else {
+            setIsPinVerified(false);
+            showToast(data.error || "⚠️ 비밀번호가 일치하지 않습니다.");
+          }
+        } catch {
+          showToast("⚠️ 비밀번호 확인 중 네트워크 오류가 발생했습니다.");
+        }
+      };
+
+      const handleSetSecurityPin = async () => {
+        const targetNewPin = newPinInput.trim();
+        if (targetNewPin.length < 4) {
+          showToast("⚠️ 보안 비밀번호는 4자리 이상 입력해주세요.");
+          return;
+        }
+        try {
+          const currentState = latestStateRef.current;
+          const res = await fetch("/api/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": CSRF_HEADER_VALUE,
+              "X-Planner-Pin": savedAuthPinRef.current || pinInput.trim() || ""
+            },
+            body: JSON.stringify({
+              ...currentState,
+              action: "setPin",
+              authPin: savedAuthPinRef.current || pinInput.trim() || "",
+              newPin: targetNewPin,
+              updatedAt: Date.now(),
+              clientId: CLIENT_ID
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            setSavedAuthPin(targetNewPin);
+            setIsCloudLocked(true);
+            setIsPinVerified(true);
+            setNewPinInput("");
+            setPinInput("");
+            showToast("🔒 보안 잠금이 설정되었습니다! 비밀번호를 아는 기기만 수정할 수 있습니다.");
+          } else {
+            showToast(data.error || "⚠️ 비밀번호 설정에 실패했습니다. 기존 비밀번호를 먼저 인증해주세요.");
+          }
+        } catch {
+          showToast("⚠️ 보안 잠금 설정 중 오류가 발생했습니다.");
+        }
+      };
+
+      const handleClearSecurityPin = async () => {
+        const authCode = savedAuthPinRef.current || pinInput.trim();
+        if (!authCode) {
+          showToast("⚠️ 잠금을 해제하려면 현재 비밀번호를 먼저 입력해주세요.");
+          return;
+        }
+        try {
+          const currentState = latestStateRef.current;
+          const res = await fetch("/api/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": CSRF_HEADER_VALUE,
+              "X-Planner-Pin": authCode
+            },
+            body: JSON.stringify({
+              ...currentState,
+              action: "clearPin",
+              authPin: authCode,
+              updatedAt: Date.now(),
+              clientId: CLIENT_ID
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            setSavedAuthPin("");
+            setIsCloudLocked(false);
+            setIsPinVerified(false);
+            setPinInput("");
+            showToast("🔓 보안 잠금이 완전히 해제되었습니다.");
+          } else {
+            showToast(data.error || "⚠️ 현재 비밀번호가 일치하지 않아 해제할 수 없습니다.");
+          }
+        } catch {
+          showToast("⚠️ 보안 잠금 해제 중 오류가 발생했습니다.");
+        }
+      };
+
+      // 첫 실행 시 불러오기 + 실시간 폴링 동기화 + 포커스/백그라운드 동기화
       useEffect(() => {
         fetchCloudData(false);
 
-        let channel = null;
-        if (supabaseClient) {
-          channel = supabaseClient
-            .channel("public:couple_calendar:japan_travel_635")
-            .on(
-              "postgres_changes",
-              { event: "*", schema: "public", table: "couple_calendar" },
-              (payload) => {
-                if (payload.new && payload.new.date === SUPABASE_SYNC_KEY) {
-                  let remote = payload.new.hae_shift;
-                  if (!remote && payload.new.hae_memo) {
-                    try {
-                      remote = JSON.parse(payload.new.hae_memo);
-                    } catch (e) {}
-                  }
-                  if (remote && remote.clientId !== CLIENT_ID) {
-                    applyRemotePayload(remote, false);
-                  }
-                }
-              }
-            )
-            .subscribe();
-        }
-
         const timer = setInterval(() => {
-          if (!isApplyingRemoteRef.current) {
+          if (!isApplyingRemoteRef.current && document.visibilityState === "visible") {
             fetchCloudData(false);
           }
-        }, 4000);
+        }, 3000);
 
         const handleFocusOrVisible = () => {
           if (document.visibilityState === "visible" && !isApplyingRemoteRef.current) {
@@ -1087,9 +1320,6 @@
           clearInterval(timer);
           window.removeEventListener("focus", handleFocusOrVisible);
           document.removeEventListener("visibilitychange", handleFocusOrVisible);
-          if (channel && supabaseClient) {
-            supabaseClient.removeChannel(channel);
-          }
         };
       }, []);
 
@@ -1129,18 +1359,16 @@
         let recovered = [];
         allKeys.forEach((k) => {
           try {
-            const arr = JSON.parse(localStorage.getItem(k));
-            if (Array.isArray(arr)) {
-              arr.forEach((item) => {
-                const isDefaultSample = ["pin-101", "pin-102", "pin-103", "pin-104"].includes(
-                  item.id
-                );
-                const alreadyIn = recovered.some((r) => r.name === item.name);
-                if (!isDefaultSample && !alreadyIn) {
-                  recovered.push(item);
-                }
-              });
-            }
+            const arr = sanitizePinList(JSON.parse(localStorage.getItem(k)));
+            arr.forEach((item) => {
+              const isDefaultSample = ["pin-101", "pin-102", "pin-103", "pin-104"].includes(
+                item.id
+              );
+              const alreadyIn = recovered.some((r) => r.name === item.name);
+              if (!isDefaultSample && !alreadyIn) {
+                recovered.push(item);
+              }
+            });
           } catch (e) {}
         });
 
@@ -1272,7 +1500,7 @@
         }
       };
 
-      // 📍 지도 위 마커 + 도보/대중교통 2가지 시간 동시 표시 배지
+      // 📍 지도 위 마커 + 도보 시간 표시 배지 (XSS 이스케이프 처리 완료)
       useEffect(() => {
         const map = mapInstanceRef.current;
         if (!map) return;
@@ -1309,7 +1537,7 @@
             const isRelevantSegment =
               pinA.id === selectedPin?.id || pinB.id === selectedPin?.id || pins.length <= 3;
             segmentLine.bindTooltip(
-              `🚶 도보 ${transit.walkFormatted}`,
+              `🚶 도보 ${escapeHtml(transit.walkFormatted)}`,
               {
                 permanent: isRelevantSegment,
                 direction: "center",
@@ -1346,6 +1574,12 @@
           const nextPin = pins[idx + 1];
           const nextTransit = nextPin ? estimateTransitInfo(pin, nextPin) : null;
 
+          const safeCategory = escapeHtml(pin.category);
+          const safeName = escapeHtml(pin.name);
+          const safeAvgLabel = escapeHtml(avgSpend.label);
+          const safeNextName = nextPin ? escapeHtml(nextPin.name) : "";
+          const safeNextWalk = nextTransit ? escapeHtml(nextTransit.walkFormatted) : "";
+
           const marker = L.marker([pin.lat, pin.lng], {
             icon: customIcon,
             draggable: true
@@ -1353,15 +1587,15 @@
             .addTo(map)
             .bindPopup(
               `<div style="min-width: 195px; line-height: 1.45;">
-                <div style="font-size:11px; color:#818cf8; font-weight:800;">코스 #${idx + 1} · ${pin.category}</div>
-                <div style="font-size:14px; font-weight:900; margin: 2px 0 4px; color:#fff;">${pin.name}</div>
+                <div style="font-size:11px; color:#818cf8; font-weight:800;">코스 #${idx + 1} · ${safeCategory}</div>
+                <div style="font-size:14px; font-weight:900; margin: 2px 0 4px; color:#fff;">${safeName}</div>
                 <div style="font-size:11px; color:#34d399; font-weight:800; background:rgba(16,185,129,0.12); padding:4px 7px; border-radius:8px; margin-bottom:5px;">
-                  📊 인당 평균: ${avgSpend.label} (약 ${formatKRW(avgSpend.avgYen * exchangeRate)})
+                  📊 인당 평균: ${safeAvgLabel} (약 ${escapeHtml(formatKRW(avgSpend.avgYen * exchangeRate))})
                 </div>
                 ${
                   nextTransit
                     ? `<div style="margin-top:5px; padding-top:5px; border-top:1px solid #334155; font-size:11px; color:#fde047; font-weight:700;">
-                        다음(${nextPin.name})까지: 🚶 도보 약 ${nextTransit.walkFormatted}
+                        다음(${safeNextName})까지: 🚶 도보 약 ${safeNextWalk}
                       </div>`
                     : ""
                 }
@@ -1597,6 +1831,8 @@
       };
 
       const handleExportJSON = () => {
+        const safeFileName =
+          cleanSafeText(tripTitle, 40, "travel").replace(/[\\/:*?"<>|.\s]+/g, "_") || "travel";
         const dataStr =
           "data:text/json;charset=utf-8," +
           encodeURIComponent(
@@ -1604,7 +1840,7 @@
           );
         const a = document.createElement("a");
         a.setAttribute("href", dataStr);
-        a.setAttribute("download", `${tripTitle}_plan.json`);
+        a.setAttribute("download", `${safeFileName}_plan.json`);
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -1614,19 +1850,28 @@
       const handleImportJSON = (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        if (file.size > 1024 * 1024) {
+          showToast("⚠️ 1MB 이하의 정상 백업 JSON 파일만 불러올 수 있습니다.");
+          return;
+        }
         const reader = new FileReader();
         reader.readAsText(file, "UTF-8");
         reader.onload = (ev) => {
           try {
             const parsed = JSON.parse(ev.target.result);
-            if (parsed.pins) {
-              setPins(parsed.pins);
-              if (parsed.tripTitle) setTripTitle(parsed.tripTitle);
-              if (parsed.exchangeRate) setExchangeRate(parsed.exchangeRate);
-              if (parsed.notes) setNotes(parsed.notes);
-              if (parsed.checklist) setChecklist(parsed.checklist);
-              if (parsed.pins[0]) setSelectedPinId(parsed.pins[0].id);
-              showToast("📂 여행 계획을 성공적으로 불러와 클라우드에 동기화합니다!");
+            if (parsed && Array.isArray(parsed.pins)) {
+              const safePins = sanitizePinList(parsed.pins);
+              setPins(safePins);
+              if (parsed.tripTitle) {
+                setTripTitle(cleanSafeText(parsed.tripTitle, 80, "우리의 일본 여행 ✈️"));
+              }
+              if (parsed.exchangeRate) {
+                setExchangeRate(Math.max(0.5, Math.min(100, Number(parsed.exchangeRate) || 9.05)));
+              }
+              if (Array.isArray(parsed.notes)) setNotes(parsed.notes.slice(0, 30));
+              if (Array.isArray(parsed.checklist)) setChecklist(parsed.checklist.slice(0, 200));
+              if (safePins[0]) setSelectedPinId(safePins[0].id);
+              showToast("📂 여행 계획을 안전하게 검증하여 불러왔습니다!");
             }
           } catch {
             showToast("⚠️ 올바른 JSON 파일이 아닙니다.");
@@ -2046,8 +2291,17 @@
       };
 
       const openGoogleMapsTransit = (pinA, pinB) => {
-        const url = `https://www.google.com/maps/dir/?api=1&origin=${pinA.lat},${pinA.lng}&destination=${pinB.lat},${pinB.lng}&travelmode=walking`;
-        window.open(url, "_blank");
+        const latA = Number(pinA?.lat);
+        const lngA = Number(pinA?.lng);
+        const latB = Number(pinB?.lat);
+        const lngB = Number(pinB?.lng);
+        if (!Number.isFinite(latA) || !Number.isFinite(lngA) || !Number.isFinite(latB) || !Number.isFinite(lngB)) {
+          return;
+        }
+        const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(
+          `${latA},${lngA}`
+        )}&destination=${encodeURIComponent(`${latB},${lngB}`)}&travelmode=walking`;
+        window.open(url, "_blank", "noopener,noreferrer");
       };
 
       // 현재 활성 뷰 판별 (중복 탭 제거 → 3개 핵심 탭: 지도+코스 / 메모장 / 예산·정산)
@@ -2206,10 +2460,16 @@
 
                   <button
                     onClick={() => setShowResetModal(true)}
-                    title="동기화 및 데이터 설정"
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-extrabold transition"
+                    title="동기화 및 보안 설정"
+                    className={`px-2.5 py-1.5 rounded-xl border text-xs font-extrabold transition flex items-center gap-1 ${
+                      isCloudLocked
+                        ? securityPin
+                          ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                          : "bg-rose-500/15 border-rose-500/40 text-rose-400"
+                        : "bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300"
+                    }`}
                   >
-                    ⚙️
+                    <span>{isCloudLocked ? (securityPin ? "🔓" : "🔒") : "⚙️"}</span>
                   </button>
                 </div>
               </div>
@@ -3463,18 +3723,81 @@
             </div>
           )}
 
-          {/* ⚙️ 데이터 관리 & 동기화 모달 */}
+          {/* ⚙️ 데이터 관리 & 보안 설정 모달 */}
           {showResetModal && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-3">
+              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-base text-white">⚙️ 클라우드 동기화 및 데이터 관리</h3>
+                  <h3 className="font-extrabold text-base text-white">⚙️ 클라우드 동기화 및 보안 설정</h3>
                   <button
                     onClick={() => setShowResetModal(false)}
                     className="text-slate-400 hover:text-white text-sm font-bold"
                   >
                     ✕
                   </button>
+                </div>
+
+                {/* 🔒 서버 보안 잠금 (비밀번호 설정 · 인증 · 해제) */}
+                <div className="p-3.5 rounded-2xl bg-slate-800/80 border border-slate-700 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                      <span>{isCloudLocked ? (securityPin ? "🔓" : "🔒") : "🛡️"}</span>
+                      <span>편집 보안 잠금 (외부인 무단 수정 방지)</span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                        isCloudLocked
+                          ? securityPin
+                            ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                            : "bg-rose-500/15 border-rose-500/40 text-rose-400"
+                          : "bg-slate-900 border-slate-700 text-slate-400"
+                      }`}
+                    >
+                      {isCloudLocked ? (securityPin ? "인증 완료" : "잠김 보호중") : "잠금 미설정"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    비밀번호를 설정하면 이 비밀번호를 입력한 기기(내 폰·여자친구 폰·맥북)만 코스와 메모를 수정할 수 있고, 외부인은 구경만 가능합니다.
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="password"
+                      value={pinInputDraft}
+                      onChange={(e) => setPinInputDraft(e.target.value)}
+                      placeholder={
+                        isCloudLocked
+                          ? "등록된 편집 비밀번호 입력 (4~32자)"
+                          : "새 편집 비밀번호 입력 (4~32자)"
+                      }
+                      className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                    {isCloudLocked ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleVerifySecurityPin}
+                          className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-xs font-extrabold shrink-0 transition"
+                        >
+                          인증
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearSecurityPin}
+                          className="px-2.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-extrabold shrink-0 transition"
+                        >
+                          해제
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSetSecurityPin}
+                        className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 keep-white text-xs font-extrabold shrink-0 transition"
+                      >
+                        잠금 설정
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <button
@@ -3515,6 +3838,18 @@
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
                     다른 기기에서 방금 수정한 내용을 불러옵니다.
+                  </p>
+                </button>
+
+                <button
+                  onClick={handleRestoreSecuritySnapshot}
+                  className="w-full p-3.5 rounded-2xl bg-cyan-600/20 border border-cyan-500/40 text-left"
+                >
+                  <div className="text-xs font-extrabold text-cyan-300">
+                    🛡️ 보안 스냅샷 금고에서 즉시 복구
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
+                    실수나 외부 영향으로 일정이 지워졌을 때, 기기 내부 보안 금고에 자동 보관된 직전 일정을 즉시 되살립니다.
                   </p>
                 </button>
 
