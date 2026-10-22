@@ -21,19 +21,37 @@
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 
   <style>
+    /* ===== Light Glass + Readability ===== */
+    :root {
+      --bg-surface: #f5f6f8;
+      --text-primary: #1c1c1e;
+      --text-secondary: #4b5563;
+      --glass-bg: rgba(255, 255, 255, 0.78);
+      --glass-border: rgba(255, 255, 255, 0.7);
+      --accent: #4f46e5;
+    }
+
     body {
       font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       overflow-x: hidden;
       -webkit-tap-highlight-color: transparent;
       transition: background-color 0.25s ease, color 0.25s ease;
       letter-spacing: -0.015em;
+      background: #f5f6f8;
+      color: #1c1c1e;
     }
+    .theme-light body,
+    body.theme-light {
+      background: var(--bg-surface, #f5f6f8);
+      color: var(--text-primary, #1c1c1e);
+    }
+
     button {
       white-space: nowrap;
       user-select: none;
       -webkit-user-select: none;
     }
-    input, textarea {
+    input, textarea, select {
       -webkit-appearance: none;
     }
     .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -42,20 +60,366 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.4); border-radius: 9999px; }
 
-    /* ✈️ 좌측 상단 연분홍색(Soft Light Pink) 비행기 로고 배지 */
-    .logo-pink-badge {
-      background: linear-gradient(135deg, #ffe4e6 0%, #fbcfe8 55%, #f9a8d4 100%) !important;
-      border: 1.5px solid #f472b6 !important;
-      box-shadow: 0 4px 12px rgba(244, 114, 182, 0.28) !important;
-      color: #831843 !important;
+    /* 💎 Apple Liquid Glass Card */
+    .glass-card {
+      background: var(--glass-bg, rgba(255, 255, 255, 0.78));
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.65));
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      border-radius: 16px;
     }
-    .theme-light .logo-pink-badge {
+
+    /* 제목/본문 대비 */
+    .pin-title {
+      color: #111827;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+    .pin-meta {
+      color: #6b7280;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    /* 드래그 중 드롭 위치 표시 */
+    .pin-drag-over {
+      border-top: 3px solid #6366f1 !important;
+      background: rgba(99, 102, 241, 0.12) !important;
+    }
+
+    /* 이동시간 뱃지 — 밝은 화면용 */
+    .theme-light .route-time-badge,
+    .route-time-badge {
+      background: rgba(255, 255, 255, 0.95) !important;
+      color: #1e40af !important;
+      border: 1px solid #bfdbfe !important;
+      border-radius: 9999px !important;
+      padding: 3px 10px !important;
+      font-weight: 800 !important;
+      font-size: 11px !important;
+      box-shadow: 0 4px 12px rgba(30, 64, 175, 0.1) !important;
+      white-space: nowrap !important;
+    }
+
+    /* 2. Day / 필터 칩 디자인 */
+    .day-chip {
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 6px 12px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+      cursor: pointer;
+    }
+    .day-chip-active {
+      background: #4f46e5;
+      color: #fff !important;
+      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
+      border: none;
+    }
+    .day-chip-idle {
+      background: #fff;
+      color: #475569;
+      border: 1px solid #e2e8f0;
+    }
+    .day-chip-idle:hover {
+      border-color: #c7d2fe;
+      color: #4338ca;
+    }
+
+    /* 5. 예산 탭 — 요약 카드 + 리스트 */
+    .budget-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .budget-stat {
+      padding: 14px 16px;
+      border-radius: 16px;
+    }
+    .budget-stat-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    .budget-stat-value {
+      font-size: 18px;
+      font-weight: 900;
+      color: #111827;
+      letter-spacing: -0.03em;
+    }
+    .budget-stat-sub {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 2px;
+    }
+    .budget-progress-track {
+      height: 8px;
+      border-radius: 9999px;
+      background: #e5e7eb;
+      overflow: hidden;
+    }
+    .budget-progress-fill {
+      height: 100%;
+      border-radius: 9999px;
+      background: linear-gradient(90deg, #6366f1, #818cf8);
+      transition: width 0.3s ease;
+    }
+
+    /* 6. 모달 공통 (장소 추가 / 확인 / 리셋) */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(15, 23, 42, 0.35);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    .modal-panel {
+      width: 100%;
+      max-width: 28rem;
+      max-height: 90vh;
+      overflow-y: auto;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(24px) saturate(160%);
+      -webkit-backdrop-filter: blur(24px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.12);
+      padding: 20px;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 900;
+      color: #111827;
+      letter-spacing: -0.02em;
+    }
+    .modal-input {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      background: #fff;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #0f172a;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .modal-input:focus {
+      border-color: #818cf8;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    }
+    .modal-input::placeholder {
+      color: #94a3b8;
+      font-weight: 500;
+    }
+    .btn-primary {
+      border-radius: 12px;
+      background: #4f46e5;
+      color: #fff !important;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 10px 16px;
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
+      transition: filter 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-primary:hover { filter: brightness(1.05); }
+    .btn-ghost {
+      border-radius: 12px;
+      background: #f1f5f9;
+      color: #475569;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 16px;
+      border: 1px solid #e2e8f0;
+      transition: background 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-ghost:hover {
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+    .btn-danger {
+      border-radius: 12px;
+      background: #ef4444;
+      color: #fff !important;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 10px 16px;
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+      transition: filter 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-danger:hover { filter: brightness(1.05); }
+
+    /* 7. 하단 탭바 (모바일) */
+    .bottom-tab-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 40;
+      display: flex;
+      gap: 4px;
+      padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(20px) saturate(160%);
+      -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border-top: 1px solid rgba(226, 232, 240, 0.9);
+    }
+    .tab-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 8px 4px;
+      border-radius: 12px;
+      font-size: 10px;
+      font-weight: 800;
+      color: #94a3b8;
+      transition: all 0.15s ease;
+    }
+    .tab-item-active {
+      background: #eef2ff;
+      color: #4f46e5 !important;
+    }
+
+    /* 9. 진입(비밀번호) 화면 */
+    .entry-screen {
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(199, 210, 254, 0.55), transparent),
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(254, 226, 226, 0.4), transparent),
+        #f5f6f8;
+    }
+    .entry-card {
+      width: 100%;
+      max-width: 380px;
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(24px) saturate(160%);
+      -webkit-backdrop-filter: blur(24px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow:
+        0 24px 48px rgba(15, 23, 42, 0.08),
+        0 0 0 1px rgba(226, 232, 240, 0.5);
+      padding: 28px 24px 24px;
+    }
+    .entry-logo {
+      width: 56px;
+      height: 56px;
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      background: linear-gradient(135deg, #ffe4e6 0%, #fce7f3 50%, #fbcfe8 100%);
+      border: 1.5px solid #f472b6;
+      box-shadow: 0 8px 20px rgba(244, 114, 182, 0.25);
+      margin: 0 auto 16px;
+    }
+    .entry-title {
+      text-align: center;
+      font-size: 20px;
+      font-weight: 900;
+      color: #111827;
+      letter-spacing: -0.03em;
+      margin-bottom: 4px;
+    }
+    .entry-sub {
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: #6b7280;
+      margin-bottom: 24px;
+      line-height: 1.45;
+    }
+    .entry-error {
+      border-radius: 12px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .entry-hint {
+      text-align: center;
+      font-size: 11px;
+      color: #9ca3af;
+      font-weight: 600;
+      margin-top: 16px;
+    }
+
+    /* 10. 토스트 / 확인 모달 */
+    .toast-pill {
+      position: fixed;
+      left: 50%;
+      bottom: calc(72px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 60;
+      max-width: min(90vw, 360px);
+      padding: 12px 18px;
+      border-radius: 9999px;
+      background: rgba(17, 24, 39, 0.92);
+      color: #fff !important;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      pointer-events: none;
+    }
+    .confirm-panel {
+      text-align: center;
+    }
+    .confirm-panel .modal-title {
+      margin-bottom: 8px;
+    }
+    .confirm-desc {
+      font-size: 13px;
+      font-weight: 600;
+      color: #6b7280;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+    .confirm-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* ✈️ 로고 배지 및 타임라인 버튼 */
+    .logo-pink-badge {
       background: linear-gradient(135deg, #ffe4e6 0%, #fce7f3 50%, #fbcfe8 100%) !important;
       border: 1.5px solid #f472b6 !important;
       box-shadow: 0 4px 12px rgba(244, 114, 182, 0.22) !important;
+      color: #831843 !important;
     }
-
-    /* 🕒 우측 상단 타임라인 버튼 (보라색 제거 → 세련된 스카이·블루 그라데이션) */
     .timeline-btn {
       background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%) !important;
       border: 1px solid rgba(56, 189, 248, 0.45) !important;
@@ -68,107 +432,33 @@
 
     /* ☀️ 라이트 모드 (밝은 화면) 글로벌 오버라이드 스타일 — 어두운 회색 박스 완전 제거 */
     .theme-light {
-      background-color: #f1f5f9 !important;
-      color: #0f172a !important;
+      background-color: #f5f6f8 !important;
+      color: #1c1c1e !important;
     }
-    .theme-light [class*="bg-slate-950"] {
-      background-color: #f8fafc !important;
-    }
-    .theme-light [class*="bg-slate-900"] {
-      background-color: #ffffff !important;
-    }
+    .theme-light [class*="bg-slate-950"],
+    .theme-light [class*="bg-slate-900"],
     .theme-light [class*="bg-slate-800"] {
-      background-color: #f1f5f9 !important;
-    }
-    .theme-light input[class*="bg-slate-"],
-    .theme-light textarea[class*="bg-slate-"],
-    .theme-light select[class*="bg-slate-"] {
-      background-color: #ffffff !important;
-      color: #0f172a !important;
-      border-color: #cbd5e1 !important;
-    }
-    .theme-light input::placeholder,
-    .theme-light textarea::placeholder {
-      color: #94a3b8 !important;
+      background-color: rgba(255, 255, 255, 0.8) !important;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
     .theme-light [class*="border-slate-800"],
     .theme-light [class*="border-slate-700"] {
-      border-color: #e2e8f0 !important;
+      border-color: rgba(226, 232, 240, 0.8) !important;
     }
     .theme-light .text-white,
     .theme-light .text-slate-100,
-    .theme-light .text-slate-200 { color: #0f172a !important; }
+    .theme-light .text-slate-200 { color: #111827 !important; }
     .theme-light .text-slate-300,
-    .theme-light .text-slate-400 { color: #475569 !important; }
+    .theme-light .text-slate-400 { color: #6b7280 !important; }
     .theme-light .text-amber-300 { color: #d97706 !important; }
     .theme-light .text-emerald-400,
     .theme-light .text-emerald-300 { color: #059669 !important; }
     .theme-light .text-indigo-400,
     .theme-light .text-indigo-300 { color: #4f46e5 !important; }
-    .theme-light [class*="bg-indigo-950"] {
-      background-color: #eef2ff !important;
-    }
-
-    /* 버튼 내부 흰색 글씨는 라이트 모드에서도 그대로 유지 */
     .theme-light .keep-white { color: #ffffff !important; }
 
-    /* 📊 상세 영역 헤더 */
-    .detail-header-card {
-      background: linear-gradient(135deg, rgba(30, 27, 75, 0.6) 0%, #0f172a 100%);
-    }
-    .theme-light .detail-header-card {
-      background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%) !important;
-      border-color: #e2e8f0 !important;
-    }
-
-    /* 📊 구글 맵 방문객 지출 안내 카드 (어둡거나 탁한 은색/회색을 없애고 선명한 가시성 제공) */
-    .google-avg-spend-box {
-      background: linear-gradient(135deg, rgba(6, 78, 59, 0.5) 0%, rgba(15, 23, 42, 0.95) 50%, rgba(49, 46, 129, 0.5) 100%);
-      border: 1.5px solid rgba(52, 211, 153, 0.4);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-    }
-    .google-avg-spend-box .spend-tag {
-      background-color: rgba(16, 185, 129, 0.2);
-      color: #34d399;
-      border: 1px solid rgba(52, 211, 153, 0.35);
-    }
-    .google-avg-spend-box .spend-price {
-      color: #fcd34d;
-    }
-    .google-avg-spend-box .spend-desc {
-      color: #e2e8f0;
-    }
-    .google-avg-spend-box .spend-desc b {
-      color: #ffffff;
-    }
-
-    /* ☀️ 라이트 모드: 화사하고 선명한 민트/에메랄드/화이트 프리미엄 카드 */
-    .theme-light .google-avg-spend-box {
-      background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 50%, #f0fdfa 100%) !important;
-      border: 1.5px solid #10b981 !important;
-      box-shadow: 0 6px 20px -2px rgba(16, 185, 129, 0.16), 0 2px 8px -1px rgba(16, 185, 129, 0.08) !important;
-    }
-    .theme-light .google-avg-spend-box .spend-tag {
-      background-color: #d1fae5 !important;
-      color: #065f46 !important;
-      border: 1px solid #6ee7b7 !important;
-      font-weight: 800 !important;
-    }
-    .theme-light .google-avg-spend-box .spend-price {
-      color: #b45309 !important;
-      font-weight: 900 !important;
-      font-size: 13px !important;
-    }
-    .theme-light .google-avg-spend-box .spend-desc {
-      color: #334155 !important;
-      font-size: 12px !important;
-      font-weight: 600 !important;
-    }
-    .theme-light .google-avg-spend-box .spend-desc b {
-      color: #0f172a !important;
-      font-weight: 900 !important;
-    }
-
+    /* 지도 마커 및 팝업 스타일 */
     .custom-pin {
       display: flex;
       align-items: center;
@@ -177,7 +467,7 @@
       height: 36px;
       border-radius: 50% 50% 50% 0;
       transform: rotate(-45deg);
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.42);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
       border: 2.5px solid #ffffff;
       transition: transform 0.2s ease;
       cursor: grab;
@@ -189,14 +479,6 @@
       font-size: 13px;
       color: #ffffff !important;
     }
-    .pin-active {
-      animation: pulse-ring 1.5s infinite;
-    }
-    @keyframes pulse-ring {
-      0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.85); }
-      70% { box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
-    }
     .traveler-avatar {
       display: flex;
       align-items: center;
@@ -206,7 +488,7 @@
       border-radius: 9999px;
       background: linear-gradient(135deg, #0ea5e9, #6366f1);
       border: 3px solid #fff;
-      box-shadow: 0 10px 25px rgba(14, 165, 233, 0.65);
+      box-shadow: 0 10px 25px rgba(14, 165, 233, 0.45);
       font-size: 20px;
     }
     .my-gps-marker {
@@ -220,24 +502,14 @@
       border-radius: 50%;
       box-shadow: 0 0 15px rgba(59, 130, 246, 0.9);
     }
-    .route-time-badge {
-      background: rgba(15, 23, 42, 0.92) !important;
-      color: #fde047 !important;
-      border: 1px solid #6366f1 !important;
-      border-radius: 9999px !important;
-      padding: 1px 7px !important;
-      font-weight: 800 !important;
-      font-size: 10px !important;
-      box-shadow: 0 3px 10px rgba(0,0,0,0.35) !important;
-      white-space: nowrap !important;
-    }
     .leaflet-popup-content-wrapper {
-      background: #1e293b !important;
-      color: #f8fafc !important;
-      border-radius: 14px !important;
-      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(255, 255, 255, 0.95) !important;
+      color: #111827 !important;
+      border-radius: 16px !important;
+      border: 1px solid rgba(226, 232, 240, 0.8) !important;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
     }
-    .leaflet-popup-tip { background: #1e293b !important; }
+    .leaflet-popup-tip { background: rgba(255, 255, 255, 0.95) !important; }
   </style>
 </head>
 <body spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off">
@@ -311,6 +583,8 @@
             /[^a-zA-Z0-9_-]/g,
             ""
           ),
+          dayId: cleanSafeText(p.dayId, 30, "day-1") || "day-1",
+          dayLabel: cleanSafeText(p.dayLabel, 30, "Day 1") || "Day 1",
           name: cleanSafeText(p.name, 120, "여행 장소"),
           category: cleanSafeText(p.category, 40, "📸 명소·포토존"),
           address: cleanSafeText(p.address, 300, ""),
@@ -791,6 +1065,44 @@
         return initial[0]?.id || null;
       });
       const [expandedPinId, setExpandedPinId] = useState(null);
+
+      // 🏷️ Day 필터 & 상태 필터 (전체 / 남은 일정 / 완료)
+      const [courseFilter, setCourseFilter] = useState("all"); // "all" | "remaining" | "done"
+      const [selectedDayId, setSelectedDayId] = useState("all"); // "all" | "day-1" | "day-2" ...
+      const [dragOverIndex, setDragOverIndex] = useState(null);
+
+      // Day 목록 자동 집계 (Day 1은 항시 기본 포함)
+      const dayOptions = useMemo(() => {
+        const daysMap = new Map();
+        daysMap.set("day-1", { id: "day-1", label: "Day 1" });
+        pins.forEach((p) => {
+          if (p.dayId && p.dayLabel) {
+            daysMap.set(p.dayId, { id: p.dayId, label: p.dayLabel });
+          }
+        });
+        return Array.from(daysMap.values());
+      }, [pins]);
+
+      const handleAddDay = () => {
+        const nextNum = dayOptions.length + 1;
+        const newDayId = `day-${nextNum}`;
+        const newDayLabel = `Day ${nextNum}`;
+        setSelectedDayId(newDayId);
+        showToast(`✨ ${newDayLabel}이 추가되었습니다. 장소를 추가하면 ${newDayLabel}에 등록됩니다.`);
+      };
+
+      // 🔍 필터링된 코스 핀 목록
+      const filteredPins = useMemo(() => {
+        return pins.filter((pin) => {
+          if (selectedDayId !== "all") {
+            const pDay = pin.dayId || "day-1";
+            if (pDay !== selectedDayId) return false;
+          }
+          if (courseFilter === "remaining" && pin.completed) return false;
+          if (courseFilter === "done" && !pin.completed) return false;
+          return true;
+        });
+      }, [pins, selectedDayId, courseFilter]);
 
       const [showAddModal, setShowAddModal] = useState(false);
       const [searchKeyword, setSearchKeyword] = useState("");
@@ -2410,8 +2722,17 @@
         const finalCategory = category || customCategory;
         const computedSpend = spendInfo || estimateGoogleAvgSpend(name, finalCategory);
 
+        const assignedDayId = selectedDayId === "all" ? "day-1" : selectedDayId;
+        const assignedDayLabel =
+          selectedDayId === "all"
+            ? "Day 1"
+            : dayOptions.find((d) => d.id === selectedDayId)?.label ||
+              `Day ${selectedDayId.replace("day-", "")}`;
+
         const newPin = {
           id: "pin-" + Date.now(),
+          dayId: assignedDayId,
+          dayLabel: assignedDayLabel,
           name,
           category: finalCategory,
           address: address || "",
@@ -2461,6 +2782,7 @@
       };
       const handleDragEnter = (index) => {
         dragOverIndexRef.current = index;
+        setDragOverIndex(index);
       };
       const handleDragEnd = () => {
         const from = dragItemIndexRef.current;
@@ -2474,6 +2796,7 @@
         }
         dragItemIndexRef.current = null;
         dragOverIndexRef.current = null;
+        setDragOverIndex(null);
       };
 
       const handleSavePinEdit = (pinId) => {
@@ -2607,21 +2930,21 @@
         if (!showAdminPage) return null;
         return (
           <div
-            className="fixed inset-0 z-[10002] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4"
+            className="modal-overlay"
             onClick={() => setShowAdminPage(false)}
           >
             <div
-              className="bg-slate-900 border border-indigo-500/40 rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto text-slate-100"
+              className="modal-panel max-w-lg space-y-4"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-9 h-9 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-lg">
+                  <div className="w-9 h-9 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-lg">
                     👑
                   </div>
                   <div>
-                    <h3 className="font-black text-base text-white">관리자 권한 페이지</h3>
-                    <p className="text-[11px] text-amber-300 font-bold">
+                    <h3 className="modal-title">관리자 권한 페이지</h3>
+                    <p className="text-[11px] text-amber-700 font-bold">
                       접속 허용 비밀번호 지정 · 추가 · 차단 IP 관리
                     </p>
                   </div>
@@ -2629,36 +2952,36 @@
                 <button
                   type="button"
                   onClick={() => setShowAdminPage(false)}
-                  className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-black text-xs"
+                  className="btn-ghost text-xs px-2.5 py-1"
                 >
                   ✕
                 </button>
               </div>
 
               {adminFeedbackMsg && (
-                <div className="p-3 rounded-2xl bg-indigo-500/15 border border-indigo-500/40 text-xs font-extrabold text-indigo-300">
+                <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-200 text-xs font-extrabold text-indigo-700">
                   {adminFeedbackMsg}
                 </div>
               )}
 
               {/* 🎲 원클릭 난수 초대 링크 (비밀번호 은닉 및 매번 다른 난수 발생) */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-pink-500/15 to-indigo-500/15 border border-pink-400/40 space-y-2.5">
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-pink-500/10 to-indigo-500/10 border border-pink-300/60 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-black text-white flex items-center gap-1.5">
+                  <div className="text-xs font-black text-slate-800 flex items-center gap-1.5">
                     <span>🎲</span>
                     <span>원클릭 난수 보안 초대 링크</span>
                   </div>
-                  <span className="text-[10px] font-bold text-pink-300 bg-pink-500/20 px-2 py-0.5 rounded-full">
+                  <span className="text-[10px] font-bold text-pink-700 bg-pink-100 px-2 py-0.5 rounded-full">
                     비밀번호 노출 0%
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
+                <p className="text-[11px] text-slate-600 leading-relaxed">
                   복사할 때마다 예측 불가능한 새로운 보안 난수 토큰이 생성됩니다. 동행인·참여자에게 링크를 공유하면 <b>비밀번호를 몰라도 누르는 즉시 자동으로 안전하게 접속</b>되며, 링크를 통해 실제 비밀번호를 유추할 수 없습니다.
                 </p>
                 <button
                   type="button"
                   onClick={handleGenerateInviteTicket}
-                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-500 to-indigo-600 hover:opacity-95 keep-white text-xs font-black shadow-lg transition flex items-center justify-center gap-1.5"
+                  className="w-full py-2.5 px-3 rounded-xl btn-primary text-xs font-black shadow-lg transition flex items-center justify-center gap-1.5"
                 >
                   <span>📋</span>
                   <span>동행인 / 참여자 전송용 난수 보안 초대 링크 복사</span>
@@ -2666,12 +2989,12 @@
               </div>
 
               {/* 1. 새 비밀번호 지정 / 추가 */}
-              <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
-                <div className="text-xs font-black text-white flex items-center justify-between">
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3">
+                <div className="text-xs font-black text-slate-900 flex items-center justify-between">
                   <span>🔑 시작 페이지 접속 비밀번호 지정·추가</span>
-                  <span className="text-[10px] text-emerald-400 font-bold">PBKDF2 암호화</span>
+                  <span className="text-[10px] text-emerald-600 font-bold">PBKDF2 암호화</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
                   여기서 지정한 비밀번호를 입력한 사람만 플래너 페이지가 열립니다. 기존 비밀번호를 완전히 바꾸거나, 동행인·참여자별 비밀번호를 여러 개 추가할 수도 있습니다.
                 </p>
                 <div className="space-y-2">
@@ -2681,7 +3004,7 @@
                     value={adminNewPasswordLabel}
                     onChange={(e) => setAdminNewPasswordLabel(e.target.value)}
                     placeholder="비밀번호 메모/별칭 (예: 마스터 비번, 동행인 A용 등 - 선택)"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-400"
+                    className="modal-input text-xs py-2"
                   />
                   <input
                     type="text"
@@ -2689,20 +3012,20 @@
                     value={adminNewPasswordInput}
                     onChange={(e) => setAdminNewPasswordInput(e.target.value)}
                     placeholder="새로 지정할 접속 비밀번호 입력 (4자 이상)"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-pink-400"
+                    className="modal-input text-xs py-2 font-bold"
                   />
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <button
                       type="button"
                       onClick={() => handleAdminSavePassword("setPrimary")}
-                      className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-xs font-black shadow-lg transition"
+                      className="btn-primary text-xs py-2"
                     >
                       🔄 이 비번으로 단독 변경
                     </button>
                     <button
                       type="button"
                       onClick={() => handleAdminSavePassword("add")}
-                      className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 keep-white text-xs font-black shadow-lg transition"
+                      className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm transition"
                     >
                       ➕ 기존 유지 + 비번 추가
                     </button>
@@ -2711,30 +3034,30 @@
               </div>
 
               {/* 2. 현재 활성화된 접속 비밀번호 목록 */}
-              <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2.5">
-                <div className="text-xs font-black text-white flex items-center justify-between">
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-2.5">
+                <div className="text-xs font-black text-slate-900 flex items-center justify-between">
                   <span>📋 현재 허용된 접속 비밀번호 ({adminAccessEntries.length}개)</span>
                 </div>
                 <div className="space-y-2">
                   {adminAccessEntries.map((entry) => (
                     <div
                       key={entry.id}
-                      className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900 border border-slate-800"
+                      className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200"
                     >
                       <div className="min-w-0">
-                        <div className="text-xs font-extrabold text-white truncate">
+                        <div className="text-xs font-extrabold text-slate-900 truncate">
                           {entry.label}
                         </div>
-                        <div className="text-[11px] text-emerald-400 font-mono font-bold">
+                        <div className="text-[11px] text-emerald-600 font-mono font-bold">
                           암호 힌트: {entry.maskedHint}{" "}
-                          <span className="text-slate-500 font-sans">({entry.createdAt})</span>
+                          <span className="text-slate-400 font-sans">({entry.createdAt})</span>
                         </div>
                       </div>
                       {adminAccessEntries.length > 1 && (
                         <button
                           type="button"
                           onClick={() => handleAdminDeletePassword(entry.id)}
-                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-[11px] font-extrabold shrink-0"
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 text-[11px] font-extrabold shrink-0"
                         >
                           삭제
                         </button>
@@ -2745,23 +3068,23 @@
               </div>
 
               {/* 3. 5회 실패로 차단된 IP 목록 및 해제 */}
-              <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2.5">
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-white">
+                  <span className="text-xs font-black text-slate-900">
                     🚫 오입력 기록 및 차단 IP ({adminBannedIps.length}건)
                   </span>
                   {adminBannedIps.length > 0 && (
                     <button
                       type="button"
                       onClick={() => handleAdminUnbanIp("ALL")}
-                      className="text-[11px] font-extrabold text-amber-300 hover:underline"
+                      className="text-[11px] font-extrabold text-amber-600 hover:underline"
                     >
                       전체 초기화·해제
                     </button>
                   )}
                 </div>
                 {adminBannedIps.length === 0 ? (
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[11px] text-slate-500">
                     현재 차단되었거나 비밀번호를 틀린 IP가 없습니다.
                   </p>
                 ) : (
@@ -2769,11 +3092,11 @@
                     {adminBannedIps.map((item) => (
                       <div
                         key={item.ip}
-                        className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900 border border-slate-800"
+                        className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200"
                       >
                         <div className="text-[11px]">
-                          <div className="font-mono font-bold text-white">{item.ip}</div>
-                          <div className={item.banned ? "text-rose-400 font-bold" : "text-amber-300"}>
+                          <div className="font-mono font-bold text-slate-900">{item.ip}</div>
+                          <div className={item.banned ? "text-rose-600 font-bold" : "text-amber-600"}>
                             {item.banned
                               ? `⛔ 5회 오류 자동 차단됨 (${item.bannedAt})`
                               : `⚠️ 실패 ${item.fails}회`}
@@ -2782,7 +3105,7 @@
                         <button
                           type="button"
                           onClick={() => handleAdminUnbanIp(item.ip)}
-                          className="px-2.5 py-1.5 rounded-lg bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 text-[11px] font-extrabold shrink-0"
+                          className="px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-extrabold shrink-0"
                         >
                           차단 해제
                         </button>
@@ -2795,7 +3118,7 @@
               <button
                 type="button"
                 onClick={() => setShowAdminPage(false)}
-                className="w-full py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-xs font-black text-white transition"
+                className="w-full btn-ghost py-3 text-xs font-black transition"
               >
                 닫기 (플래너 화면으로 돌아가기)
               </button>
@@ -2805,116 +3128,84 @@
       };
 
       // =========================================================================
-      // 🔐 시작 페이지: 비밀번호를 누른 사람만 페이지가 열리도록 원천 차단 게이트
+      // 🔐 시작 페이지: 비밀번호를 누른 사람만 페이지가 열리도록 원천 차단 게이트 (Light Glass)
       // =========================================================================
       if (!isEntryAuthenticated) {
         return (
-          <div
-            spellCheck={false}
-            className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 relative overflow-hidden"
-          >
-            {toastMsg && (
-              <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[10005] bg-indigo-600 keep-white px-4 py-2.5 rounded-2xl shadow-2xl border border-indigo-400/50 font-bold text-xs sm:text-sm max-w-[92vw] text-center">
-                {toastMsg}
-              </div>
-            )}
+          <div spellCheck={false} className="entry-screen">
+            {toastMsg && <div className="toast-pill">{toastMsg}</div>}
 
             {renderAdminVaultModal()}
 
-            <div className="w-full max-w-sm bg-slate-900/95 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 relative z-10">
-              {/* 상단 연분홍 비행기 배지 & 타이틀 */}
-              <div className="text-center space-y-2">
-                <div className="w-14 h-14 rounded-2xl logo-pink-badge flex items-center justify-center text-2xl mx-auto shadow-lg">
-                  ✈️
-                </div>
-                <h1 className="text-lg sm:text-xl font-black text-white tracking-tight">
-                  스마트 여행 플래너
-                </h1>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  지정된 접속 비밀번호를 입력한 사용자만 열람·공유할 수 있습니다.
-                </p>
-              </div>
+            <div className="entry-card space-y-4">
+              <div className="entry-logo">✈️</div>
+              <h1 className="entry-title">여행 플래너</h1>
+              <p className="entry-sub">
+                동행인과 함께 쓰는 스마트 일정·예산 보드
+                <br />
+                비밀번호를 입력해 주세요
+              </p>
 
               {isEntryChecking ? (
                 <div className="py-8 text-center space-y-2">
                   <div className="text-2xl animate-spin inline-block">🔄</div>
-                  <p className="text-xs font-bold text-slate-300">보안 인증 상태를 확인하고 있습니다...</p>
+                  <p className="text-xs font-bold text-slate-500">보안 인증 상태를 확인하고 있습니다...</p>
                 </div>
               ) : isIpBanned ? (
-                <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-center space-y-2">
-                  <div className="text-2xl">🚫</div>
-                  <div className="text-xs sm:text-sm font-black text-rose-300">
-                    비밀번호 5회 오류로 IP가 자동 차단되었습니다
-                  </div>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                <div className="entry-error text-center space-y-1">
+                  <div className="text-xl">🚫</div>
+                  <div className="font-black text-sm">비밀번호 5회 오류로 IP가 자동 차단되었습니다</div>
+                  <p className="text-[11px] font-medium leading-relaxed opacity-90">
                     {entryErrorMsg ||
                       `보안 정책에 따라 현재 IP(${detectedClientIp || "접속 IP"})에서의 접근이 차단되었습니다.`}
                   </p>
                 </div>
               ) : (
                 <form onSubmit={handleEntryLogin} className="space-y-3">
-                  <div className="space-y-1.5">
-                    <label className="block text-[11px] font-extrabold text-slate-300">
-                      🔒 시작 페이지 접속 비밀번호
-                    </label>
-                    <input
-                      type="password"
-                      autoFocus
-                      value={entryPasswordInput}
-                      onChange={(e) => setEntryPasswordInput(e.target.value)}
-                      placeholder="지정된 접속 비밀번호를 입력하세요"
-                      className="w-full bg-slate-950 border border-slate-700 focus:border-pink-400 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none transition"
-                    />
-                  </div>
+                  <input
+                    type="password"
+                    className="modal-input"
+                    placeholder="접속 비밀번호"
+                    value={entryPasswordInput}
+                    onChange={(e) => setEntryPasswordInput(e.target.value)}
+                    autoFocus
+                  />
 
-                  {entryErrorMsg && (
-                    <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-xs font-extrabold text-rose-300 leading-relaxed">
-                      ⚠️ {entryErrorMsg}
-                    </div>
-                  )}
+                  {entryErrorMsg && <div className="entry-error">{entryErrorMsg}</div>}
 
-                  <button
-                    type="submit"
-                    className="w-full py-3.5 rounded-2xl timeline-btn keep-white font-black text-sm shadow-lg transition flex items-center justify-center gap-1.5"
-                  >
-                    <span>🔓</span>
-                    <span>비밀번호 확인 후 플래너 열기</span>
+                  <button type="submit" className="btn-primary w-full py-3 text-sm">
+                    입장하기
                   </button>
 
-                  <div className="text-[11px] text-center text-slate-400 font-semibold space-y-0.5">
-                    <div>✨ 인증된 기기(스마트폰·태블릿·PC)는 간편하게 유지됩니다</div>
-                    <div>
-                      🛡️ 보안 보호 작동 중 · 비밀번호 5회 오류 시 해당 IP 자동 차단
-                      {remainingAttempts < 5 && (
-                        <span className="text-amber-300 font-extrabold ml-1">
-                          (남은 기회: {remainingAttempts}회)
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  <p className="entry-hint">
+                    5회 실패 시 일시 차단될 수 있습니다
+                    {remainingAttempts < 5 && remainingAttempts > 0 && (
+                      <> · 남은 시도 {remainingAttempts}회</>
+                    )}
+                  </p>
                 </form>
               )}
 
-              {/* 👑 하단 관리자 권한 영역 (관리자 전용 비밀번호 입력 시 관리자 페이지 오픈) */}
-              <div className="pt-3 border-t border-slate-800 space-y-2.5">
+              {/* 👑 관리자 권한 열기 토글 */}
+              <div className="pt-3 border-t border-slate-200/80 text-center">
                 <button
                   type="button"
                   onClick={() => {
                     setShowAdminAuthBox((v) => !v);
                     setAdminFeedbackMsg("");
                   }}
-                  className="w-full py-2.5 px-3 rounded-2xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700 text-xs font-extrabold text-slate-300 flex items-center justify-center gap-1.5 transition"
+                  className="text-[11px] font-extrabold text-slate-500 hover:text-indigo-600 transition inline-flex items-center gap-1"
                 >
                   <span>👑</span>
-                  <span>비밀번호 추가·지정 (관리자 권한 페이지)</span>
+                  <span>비밀번호 추가·지정 (관리자 권한)</span>
                 </button>
 
                 {showAdminAuthBox && (
                   <form
                     onSubmit={handleAdminLogin}
-                    className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5"
+                    className="mt-3 p-3 rounded-2xl bg-white/90 border border-slate-200 space-y-2 text-left shadow-xs"
                   >
-                    <div className="text-[11px] font-extrabold text-amber-300">
+                    <div className="text-[11px] font-extrabold text-amber-600">
                       🔑 관리자 전용 비밀번호 입력
                     </div>
                     <div className="flex gap-1.5">
@@ -2923,17 +3214,17 @@
                         value={adminKeyInput}
                         onChange={(e) => setAdminKeyInput(e.target.value)}
                         placeholder="관리자 비밀번호 입력"
-                        className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
+                        className="modal-input flex-1 py-1.5 text-xs"
                       />
                       <button
                         type="submit"
-                        className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shrink-0 transition"
+                        className="btn-primary py-1.5 px-3 text-xs shrink-0"
                       >
                         열기
                       </button>
                     </div>
                     {adminFeedbackMsg && (
-                      <p className="text-[11px] text-rose-400 font-bold">{adminFeedbackMsg}</p>
+                      <p className="text-[11px] text-rose-500 font-bold">{adminFeedbackMsg}</p>
                     )}
                   </form>
                 )}
@@ -2948,13 +3239,14 @@
           spellCheck={false}
           className={`min-h-screen flex flex-col pb-24 lg:pb-10 ${
             theme === "light"
-              ? "theme-light bg-slate-100 text-slate-900"
+              ? "theme-light text-slate-900"
               : "bg-slate-950 text-slate-100"
           }`}
+          style={{ background: theme === "light" ? "var(--bg-surface)" : undefined }}
         >
-          {/* 상단 토스트 알림 */}
+          {/* 상단/하단 토스트 알림 (Requirement 9: .toast-pill) */}
           {toastMsg && (
-            <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[9999] bg-indigo-600 keep-white px-4 py-2.5 rounded-2xl shadow-2xl border border-indigo-400/50 font-bold text-xs sm:text-sm max-w-[92vw] text-center">
+            <div className="toast-pill">
               {toastMsg}
             </div>
           )}
@@ -2962,24 +3254,21 @@
           {/* 👑 관리자 권한 모달 */}
           {renderAdminVaultModal()}
 
-          {/* 🗑️ 삭제 확인 모달 (실수로 X를 눌렀을 때 방지) */}
+          {/* 🗑️ 삭제 확인 모달 (Requirement 10: .modal-overlay & .confirm-panel) */}
           {confirmModal.isOpen && (
             <div
-              className="fixed inset-0 z-[9998] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+              className="modal-overlay"
               onClick={() => setConfirmModal({ isOpen: false, title: "", message: "", onConfirm: null })}
             >
-              <div
-                className="bg-slate-900 border border-slate-700 rounded-3xl max-w-xs sm:max-w-sm w-full p-5 shadow-2xl space-y-4 text-center"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center mx-auto text-2xl">
+              <div className="modal-panel confirm-panel" onClick={(e) => e.stopPropagation()}>
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto text-2xl">
                   🗑️
                 </div>
-                <div className="space-y-1.5">
-                  <h3 className="font-black text-base sm:text-lg text-white">
+                <div className="space-y-1.5 text-center">
+                  <h3 className="font-black text-base sm:text-lg text-slate-900">
                     {confirmModal.title || "삭제하시겠습니까?"}
                   </h3>
-                  <p className="text-xs sm:text-sm text-slate-300 leading-relaxed break-keep">
+                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed break-keep">
                     {confirmModal.message}
                   </p>
                 </div>
@@ -2989,7 +3278,7 @@
                     onClick={() =>
                       setConfirmModal({ isOpen: false, title: "", message: "", onConfirm: null })
                     }
-                    className="py-2.5 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs sm:text-sm font-extrabold text-slate-200 transition"
+                    className="btn-ghost"
                   >
                     취소
                   </button>
@@ -3000,7 +3289,7 @@
                       setConfirmModal({ isOpen: false, title: "", message: "", onConfirm: null });
                       if (typeof fn === "function") fn();
                     }}
-                    className="py-2.5 px-4 rounded-2xl bg-rose-600 hover:bg-rose-500 keep-white text-xs sm:text-sm font-black shadow-lg transition"
+                    className="btn-danger"
                   >
                     삭제하기
                   </button>
@@ -3010,15 +3299,20 @@
           )}
 
           {/* =================================================================
-              📱 상단 네이티브 앱 헤더 (여백이 넉넉하고 잘림 없는 클린 2단 구조)
+              📱 상단 네이티브 앱 헤더 (Apple Liquid Glass)
              ================================================================= */}
-          <header className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-xl sticky top-0 z-40 px-3 sm:px-5 py-2.5 shadow-sm">
+          <header
+            className="sticky top-0 z-40 px-3 sm:px-5 py-2.5 backdrop-blur-xl transition-colors duration-200 border-b border-white/70 shadow-sm"
+            style={{
+              background: theme === "light" ? "rgba(255, 255, 255, 0.82)" : "rgba(15, 23, 42, 0.95)"
+            }}
+          >
             <div className="max-w-[1160px] mx-auto space-y-2">
               {/* 1단: 연분홍 비행기 로고 + 여행 제목 + 동기화 상태 + 우측 액션(테마·타임라인·설정) */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <div
-                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl logo-pink-badge flex items-center justify-center font-black text-base sm:text-lg shrink-0"
+                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl logo-pink-badge flex items-center justify-center font-black text-base sm:text-lg shrink-0 shadow-sm"
                     title="스마트 여행 플래너"
                   >
                     ✈️
@@ -3031,7 +3325,7 @@
                     autoComplete="off"
                     value={tripTitle}
                     onChange={(e) => setTripTitle(e.target.value)}
-                    className="bg-slate-800 border border-slate-700 font-extrabold text-sm sm:text-base text-white focus:outline-none focus:border-pink-400 rounded-xl px-2.5 py-1.5 min-w-0 flex-1 max-w-[165px] sm:max-w-[240px] transition"
+                    className="bg-white/90 border border-slate-200 font-extrabold text-sm sm:text-base text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl px-2.5 py-1.5 min-w-0 flex-1 max-w-[165px] sm:max-w-[240px] transition shadow-inner"
                   />
                   {/* ☁️ 실시간 동기화 상태 배지 */}
                   <button
@@ -3039,10 +3333,10 @@
                     title="클릭하여 즉시 동기화"
                     className={`px-2 py-1.5 rounded-xl text-[11px] font-extrabold border flex items-center gap-1 shrink-0 transition ${
                       syncStatus === "synced"
-                        ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                         : syncStatus === "saving" || syncStatus === "connecting"
-                        ? "bg-amber-500/15 border-amber-500/40 text-amber-300 animate-pulse"
-                        : "bg-slate-800 border-slate-700 text-slate-400"
+                        ? "bg-amber-50 border-amber-200 text-amber-700 animate-pulse"
+                        : "bg-slate-100 border-slate-200 text-slate-600"
                     }`}
                   >
                     {syncStatus === "synced" && (
@@ -3057,12 +3351,12 @@
                   </button>
                 </div>
 
-                {/* 우측 상단 버튼 그룹 (테마 / 타임라인 / 설정) */}
+                {/* 우측 상단 버튼 그룹 */}
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
                     title={theme === "light" ? "어두운 화면으로 전환" : "밝은 화면으로 전환"}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-extrabold text-white shadow-sm transition flex items-center gap-1"
+                    className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-700 shadow-sm transition flex items-center gap-1"
                   >
                     <span>{theme === "light" ? "🌙" : "☀️"}</span>
                     <span className="hidden sm:inline">
@@ -3073,7 +3367,7 @@
                   <button
                     onClick={handlePlayFullJourney}
                     disabled={isJourneyPlaying || pins.length < 2}
-                    className="px-2.5 sm:px-3 py-1.5 rounded-xl timeline-btn keep-white text-xs font-extrabold disabled:opacity-40 transition flex items-center gap-1"
+                    className="px-2.5 sm:px-3 py-1.5 rounded-xl timeline-btn keep-white text-xs font-extrabold disabled:opacity-40 transition flex items-center gap-1 shadow-sm"
                   >
                     <span>🕒</span>
                     <span>타임라인</span>
@@ -3082,33 +3376,33 @@
                   <button
                     onClick={() => setShowResetModal(true)}
                     title="동기화 및 보안 설정"
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-extrabold transition flex items-center gap-1"
+                    className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-extrabold transition flex items-center gap-1 shadow-sm"
                   >
                     <span>⚙️</span>
                   </button>
                 </div>
               </div>
 
-              {/* 2단: 슬림 요약 배지(완료·총 도보·예산) + 우측 액션(최단경로·장소추가) — 모바일 화면에 쏙 들어오는 비율 */}
+              {/* 2단: 슬림 요약 배지(완료·도보·예산) + 최단경로·장소추가 */}
               <div className="flex items-center justify-between gap-1.5 pt-0.5">
                 <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
-                  <div className="bg-slate-800 border border-slate-700 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0">
-                    <span className="text-slate-400 font-bold">완료</span>
-                    <span className="font-black text-white">
+                  <div className="bg-white/80 border border-slate-200 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0 shadow-sm">
+                    <span className="text-slate-500 font-bold">완료</span>
+                    <span className="font-black text-slate-900">
                       {pins.filter((p) => p.completed).length}/{pins.length}
                     </span>
                   </div>
-                  <div className="bg-slate-800 border border-slate-700 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0">
-                    <span className="font-extrabold text-emerald-400">
+                  <div className="bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0 shadow-sm">
+                    <span className="font-extrabold text-emerald-700">
                       🚶 도보 {budgetStats.totalWalkFormatted}
                     </span>
                   </div>
                   <div
                     onClick={() => switchAppView("budget")}
-                    className="hidden xs:flex sm:flex bg-slate-800 border border-slate-700 px-2 py-1 rounded-xl text-[11px] items-center gap-1 cursor-pointer hover:border-emerald-500/50 transition shrink-0"
+                    className="hidden xs:flex sm:flex bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-xl text-[11px] items-center gap-1 cursor-pointer hover:border-indigo-400 transition shrink-0 shadow-sm"
                   >
-                    <span className="text-slate-400 font-bold">예산</span>
-                    <span className="font-black text-emerald-400">
+                    <span className="text-indigo-600 font-bold">예산</span>
+                    <span className="font-black text-indigo-700">
                       {formatKRW(budgetStats.totalPlannedKRW)}
                     </span>
                   </div>
@@ -3117,27 +3411,27 @@
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={handleOptimizeShortestRoute}
-                    className="px-2.5 py-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-black shadow-sm transition"
+                    className="px-2.5 py-1 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] font-black shadow-sm transition"
                   >
                     ⚡ 최단경로
                   </button>
                   <button
                     onClick={() => setShowAddModal(true)}
-                    className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-[11px] font-extrabold shadow-sm transition"
+                    className="px-2.5 py-1 rounded-xl btn-primary text-[11px] font-extrabold shadow-sm transition"
                   >
                     ＋ 장소추가
                   </button>
                 </div>
               </div>
 
-              {/* 데스크탑 / 대화면 상단 앱 탭 바 — 모바일 앱과 동일한 3개 탭 구성 */}
+              {/* 데스크탑 상단 앱 탭 바 */}
               <div className="hidden lg:grid lg:grid-cols-3 gap-2 pt-1">
                 <button
                   onClick={() => switchAppView("split")}
                   className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
                     currentView === "split"
-                      ? "bg-indigo-600 keep-white border-indigo-500 shadow-md"
-                      : "bg-slate-800 text-slate-300 border-slate-700 hover:border-indigo-400"
+                      ? "bg-indigo-600 text-white border-indigo-600 shadow-md font-black"
+                      : "bg-white/80 text-slate-700 border-slate-200 hover:border-indigo-300"
                   }`}
                 >
                   <span>🗺️</span>
@@ -3147,8 +3441,8 @@
                   onClick={() => switchAppView("notepad")}
                   className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
                     currentView === "notepad"
-                      ? "bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black"
-                      : "bg-slate-800 text-slate-300 border-slate-700 hover:border-amber-400"
+                      ? "bg-amber-500 text-slate-950 border-amber-500 shadow-md font-black"
+                      : "bg-white/80 text-slate-700 border-slate-200 hover:border-amber-300"
                   }`}
                 >
                   <span>📝</span>
@@ -3158,8 +3452,8 @@
                   onClick={() => switchAppView("budget")}
                   className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
                     currentView === "budget"
-                      ? "bg-emerald-600 keep-white border-emerald-500 shadow-md"
-                      : "bg-slate-800 text-slate-300 border-slate-700 hover:border-emerald-400"
+                      ? "bg-emerald-600 text-white border-emerald-600 shadow-md font-black"
+                      : "bg-white/80 text-slate-700 border-slate-200 hover:border-emerald-300"
                   }`}
                 >
                   <span>💰</span>
@@ -3170,7 +3464,7 @@
           </header>
 
           {/* =================================================================
-              🗺️ 메인 영역 1: 지도 + 여행 코스 (눈이 편안하고 여백이 살아있는 카드 뷰)
+              🗺️ 메인 영역 1: 지도 + 여행 코스 (Apple Liquid Glass)
              ================================================================= */}
           <main
             className={`flex-1 max-w-[1160px] w-full mx-auto px-3 py-3 sm:p-5 ${
@@ -3179,13 +3473,13 @@
           >
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
               {/* 1. 지도 패널 */}
-              <section className="lg:col-span-6 lg:order-2 flex h-[30vh] min-h-[210px] sm:h-[38vh] lg:h-[78vh] lg:sticky lg:top-32 flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-lg relative">
+              <section className="lg:col-span-6 lg:order-2 flex h-[30vh] min-h-[210px] sm:h-[38vh] lg:h-[78vh] lg:sticky lg:top-32 flex-col glass-card overflow-hidden shadow-lg relative">
                 <div ref={mapContainerRef} className="w-full h-full flex-1 z-10" />
 
                 <div className="absolute top-2.5 left-2.5 right-2.5 z-20 flex items-center justify-between gap-1.5 pointer-events-none">
                   <button
                     onClick={handleFindMyLocation}
-                    className="bg-blue-600 hover:bg-blue-500 keep-white border border-blue-400 px-2.5 py-1.5 rounded-xl shadow-lg pointer-events-auto text-[11px] font-black flex items-center gap-1"
+                    className="bg-blue-600 hover:bg-blue-500 text-white border border-blue-400 px-2.5 py-1.5 rounded-xl shadow-md pointer-events-auto text-[11px] font-black flex items-center gap-1 transition"
                   >
                     🛰️ 내 위치
                   </button>
@@ -3196,25 +3490,25 @@
                         mapInstanceRef.current.flyToBounds(bounds.pad(0.3), { duration: 0.8 });
                       }
                     }}
-                    className="bg-slate-900 hover:bg-slate-800 border border-slate-700 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold text-white shadow-lg pointer-events-auto"
+                    className="bg-white/90 hover:bg-white border border-slate-200 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold text-slate-800 shadow-md pointer-events-auto transition backdrop-blur-md"
                   >
                     🔍 전체 코스 한눈에
                   </button>
                 </div>
 
                 {(animatingInfo || lastCompletedSegment) && (
-                  <div className="absolute bottom-2.5 left-2.5 right-2.5 z-30 bg-slate-900 backdrop-blur-xl border-2 border-sky-500 rounded-2xl p-2.5 sm:p-3 shadow-2xl">
+                  <div className="absolute bottom-2.5 left-2.5 right-2.5 z-30 bg-white/95 backdrop-blur-xl border border-sky-300 rounded-2xl p-2.5 sm:p-3 shadow-xl">
                     {animatingInfo ? (
                       <>
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-[11px] font-extrabold text-sky-400">
+                          <span className="text-[11px] font-extrabold text-sky-700">
                             🕒 타임라인 이동 중... ({animatingInfo.progress}%)
                           </span>
-                          <span className="text-xs font-black text-emerald-400">
+                          <span className="text-xs font-black text-emerald-600">
                             🚶 도보 약 {animatingInfo.transit.walkFormatted} ({animatingInfo.transit.distanceKm}km)
                           </span>
                         </div>
-                        <div className="text-xs font-extrabold text-white truncate">
+                        <div className="text-xs font-extrabold text-slate-800 truncate">
                           📍 {animatingInfo.fromPin.name} ━━🚶━━▶ 🎯 {animatingInfo.toPin.name}
                         </div>
                       </>
@@ -3222,12 +3516,12 @@
                       lastCompletedSegment && (
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="text-[11px] font-bold text-emerald-400">
+                            <div className="text-[11px] font-bold text-emerald-700">
                               ✅ 다음 장소 도보 소요시간
                             </div>
-                            <div className="text-xs font-black text-white mt-0.5 truncate">
+                            <div className="text-xs font-black text-slate-800 mt-0.5 truncate">
                               {lastCompletedSegment.fromPin.name} → {lastCompletedSegment.toPin.name} :{" "}
-                              <span className="text-emerald-400">
+                              <span className="text-emerald-600">
                                 🚶 도보 약 {lastCompletedSegment.transit.walkFormatted}
                               </span>{" "}
                               ({lastCompletedSegment.transit.distanceKm}km)
@@ -3235,7 +3529,7 @@
                           </div>
                           <button
                             onClick={() => setLastCompletedSegment(null)}
-                            className="px-2 py-1 rounded-lg bg-slate-800 text-slate-400 text-[11px] font-bold shrink-0"
+                            className="px-2 py-1 rounded-lg bg-slate-100 text-slate-500 text-[11px] font-bold shrink-0 hover:bg-slate-200"
                           >
                             ✕
                           </button>
@@ -3246,68 +3540,104 @@
                 )}
               </section>
 
-              {/* 2. 슬림 & 클린 여행 코스 리스트 패널 */}
-              <section className="lg:col-span-6 lg:order-1 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-lg">
-                <div className="px-4 py-3.5 border-b border-slate-800 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <h2 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-1.5">
-                      <span>📍 여행 코스</span>
-                      <span className="text-indigo-400">({pins.length}곳)</span>
-                    </h2>
-                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                      코스를 누르면 평균 지출액·메모·예산 상세창이 펼쳐집니다
-                    </p>
+              {/* 2. 여행 코스 리스트 패널 */}
+              <section className="lg:col-span-6 lg:order-1 flex flex-col space-y-2.5">
+                {/* 필터 + Day 바 — sticky glass (Requirement 2) */}
+                <div className="sticky top-0 z-10 space-y-2 glass-card p-2.5">
+                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                    {["전체", "남은 일정", "완료"].map((label, i) => {
+                      const id = ["all", "remaining", "done"][i];
+                      return (
+                        <button
+                          key={id}
+                          className={`day-chip ${courseFilter === id ? "day-chip-active" : "day-chip-idle"}`}
+                          onClick={() => setCourseFilter(id)}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <button
-                    onClick={() => setShowAddModal(true)}
-                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shadow-sm shrink-0"
-                  >
-                    ＋ 장소 추가
-                  </button>
+                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar items-center">
+                    <button
+                      className={`day-chip ${selectedDayId === "all" ? "day-chip-active" : "day-chip-idle"}`}
+                      onClick={() => setSelectedDayId("all")}
+                    >
+                      모든 Day
+                    </button>
+                    {dayOptions.map((d) => (
+                      <button
+                        key={d.id}
+                        className={`day-chip ${selectedDayId === d.id ? "day-chip-active" : "day-chip-idle"}`}
+                        onClick={() => setSelectedDayId(d.id)}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                    <button className="day-chip day-chip-idle text-indigo-600 font-extrabold" onClick={handleAddDay}>
+                      ＋ Day
+                    </button>
+                  </div>
                 </div>
 
-                <div className="p-3 sm:p-4 space-y-2">
+                {/* 코스 목록 */}
+                <div className="space-y-2">
                   {pins.length === 0 ? (
-                    <div className="text-center py-12 px-4 space-y-3">
+                    <div className="glass-card text-center py-12 px-4 space-y-3">
                       <div className="text-4xl">🗺️</div>
-                      <div className="text-sm sm:text-base font-extrabold text-white">
+                      <div className="text-base font-extrabold text-slate-900">
                         아직 등록된 여행 코스가 없습니다.
                       </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
+                      <p className="text-xs text-slate-500 leading-relaxed">
                         장소를 검색하거나 구글맵 공유 링크를 붙여넣어 첫 코스를 추가해보세요!
                       </p>
                       <div className="flex flex-wrap justify-center gap-2 pt-2">
                         <button
                           onClick={() => setShowAddModal(true)}
-                          className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-xs font-extrabold keep-white shadow-lg"
+                          className="btn-primary text-xs font-extrabold shadow-md"
                         >
                           ＋ 첫 여행 장소 검색/추가하기
                         </button>
                         <button
                           onClick={handleRecoverPreviousStorageData}
-                          className="px-3.5 py-2.5 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-xs font-extrabold text-emerald-400"
+                          className="btn-ghost text-xs font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200"
                         >
                           🔄 이전 저장 코스 불러오기
                         </button>
                       </div>
                     </div>
+                  ) : filteredPins.length === 0 ? (
+                    <div className="glass-card text-center py-10 px-4 space-y-2">
+                      <div className="text-2xl">🔍</div>
+                      <div className="text-sm font-bold text-slate-700">
+                        해당 필터 조건에 맞는 코스가 없습니다.
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCourseFilter("all");
+                          setSelectedDayId("all");
+                        }}
+                        className="btn-ghost text-xs font-bold text-indigo-600 mt-2"
+                      >
+                        전체 코스 보기
+                      </button>
+                    </div>
                   ) : (
-                    pins.map((pin, index) => {
+                    filteredPins.map((pin) => {
+                      const originalIndex = pins.findIndex((p) => p.id === pin.id);
                       const isSelected = pin.id === selectedPin?.id;
                       const isExpanded = expandedPinId === pin.id;
-                      const pinTotalKRW = pin.items.reduce((s, i) => s + Number(i.price || 0), 0);
+                      const pinTotalKRW = (pin.items || []).reduce((s, i) => s + Number(i.price || 0), 0);
                       const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
-                      const prevPin = index > 0 ? pins[index - 1] : null;
-                      const nextPin = pins[index + 1] || null;
-                      const transitFromPrev = prevPin ? estimateTransitInfo(prevPin, pin) : null;
+                      const nextPin = pins[originalIndex + 1] || null;
                       const transitToNext = nextPin ? estimateTransitInfo(pin, nextPin) : null;
 
                       return (
                         <React.Fragment key={pin.id}>
                           <div
                             draggable
-                            onDragStart={() => handleDragStart(index)}
-                            onDragEnter={() => handleDragEnter(index)}
+                            onDragStart={() => handleDragStart(originalIndex)}
+                            onDragEnter={() => handleDragEnter(originalIndex)}
                             onDragEnd={handleDragEnd}
                             onDragOver={(e) => e.preventDefault()}
                             onClick={() => {
@@ -3315,48 +3645,35 @@
                               setExpandedPinId((prev) => (prev === pin.id ? null : pin.id));
                               if (mapInstanceRef.current) {
                                 mapInstanceRef.current.flyTo([pin.lat, pin.lng], 16, { duration: 0.7 });
-                                if (markersRef.current[index]) {
-                                  markersRef.current[index].openPopup();
+                                if (markersRef.current[originalIndex]) {
+                                  markersRef.current[originalIndex].openPopup();
                                 }
                               }
                             }}
-                            className={`p-3.5 rounded-2xl border transition cursor-pointer ${
-                              isExpanded
-                                ? "bg-indigo-950/60 border-indigo-500 shadow-md"
-                                : pin.completed
-                                ? "bg-slate-900 border-emerald-500/40"
-                                : "bg-slate-800 border-slate-700 hover:border-slate-600"
-                            }`}
+                            className={`
+                              glass-card relative p-3.5 transition-all duration-200 cursor-grab active:cursor-grabbing
+                              ${isSelected ? "ring-2 ring-indigo-400/50" : ""}
+                              ${dragOverIndex === originalIndex ? "pin-drag-over" : ""}
+                              ${pin.completed ? "opacity-75" : ""}
+                            `}
                           >
-                            {/* 1열: 번호 뱃지 + 장소명/카테고리 + 순서/삭제 버튼 */}
                             <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-start gap-2.5 min-w-0">
-                                <span
-                                  className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0 mt-0.5 ${
-                                    pin.completed
-                                      ? "bg-emerald-500 text-slate-950"
-                                      : isSelected
-                                      ? "bg-pink-500 keep-white"
-                                      : "bg-indigo-600 keep-white"
-                                  }`}
-                                >
-                                  {pin.completed ? "✓" : index + 1}
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-[11px] font-bold text-indigo-400">
-                                      {pin.category}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                  <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                                    {pin.dayLabel || "Day 1"}
+                                  </span>
+                                  <span className="text-[11px] font-bold text-slate-500">
+                                    {pin.category}
+                                  </span>
+                                  {pin.memo && (
+                                    <span className="text-[10px] font-semibold text-slate-400 truncate max-w-[170px] sm:max-w-[240px]">
+                                      · 📝 {pin.memo}
                                     </span>
-                                    {pin.memo && (
-                                      <span className="text-[10px] font-bold text-slate-400 truncate max-w-[170px] sm:max-w-[240px]">
-                                        · 📝 {pin.memo}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <h3 className="font-black text-sm sm:text-base text-white leading-snug break-keep mt-0.5">
-                                    {pin.name}
-                                  </h3>
+                                  )}
                                 </div>
+                                <h3 className="pin-title truncate">{pin.name}</h3>
+                                <p className="pin-meta truncate mt-0.5">{pin.address}</p>
                               </div>
 
                               <div
@@ -3364,18 +3681,18 @@
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <button
-                                  onClick={() => handleMovePinOrder(index, -1)}
-                                  disabled={index === 0}
+                                  onClick={() => handleMovePinOrder(originalIndex, -1)}
+                                  disabled={originalIndex === 0}
                                   title="위로 이동"
-                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-900 hover:bg-slate-700 border border-slate-700 text-slate-300 disabled:opacity-25 text-[11px] flex items-center justify-center"
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white/80 hover:bg-white border border-slate-200 text-slate-600 disabled:opacity-25 text-[11px] flex items-center justify-center transition shadow-sm"
                                 >
                                   ▲
                                 </button>
                                 <button
-                                  onClick={() => handleMovePinOrder(index, 1)}
-                                  disabled={index === pins.length - 1}
+                                  onClick={() => handleMovePinOrder(originalIndex, 1)}
+                                  disabled={originalIndex === pins.length - 1}
                                   title="아래로 이동"
-                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-900 hover:bg-slate-700 border border-slate-700 text-slate-300 disabled:opacity-25 text-[11px] flex items-center justify-center"
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white/80 hover:bg-white border border-slate-200 text-slate-600 disabled:opacity-25 text-[11px] flex items-center justify-center transition shadow-sm"
                                 >
                                   ▼
                                 </button>
@@ -3391,16 +3708,16 @@
                                     )
                                   }
                                   title="코스 삭제"
-                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 text-xs font-black flex items-center justify-center ml-0.5"
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 text-xs font-black flex items-center justify-center ml-0.5 transition shadow-sm"
                                 >
                                   ✕
                                 </button>
                               </div>
                             </div>
 
-                            {/* 2열(슬림 요약 바): 평균 지출액 & 내 예산 한 줄 표시 + 우측 [상세·예산 ▾] / [완료] */}
+                            {/* 슬림 요약 바: 평균 지출액 & 내 예산 + 완료 버튼 */}
                             <div
-                              className="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center justify-between gap-2 flex-wrap"
+                              className="mt-2.5 pt-2 border-t border-slate-200/70 flex items-center justify-between gap-2 flex-wrap"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <div
@@ -3409,11 +3726,11 @@
                                 }
                                 className="flex items-center gap-2 text-[11px] sm:text-xs cursor-pointer"
                               >
-                                <span className="font-bold text-slate-300">
-                                  📊 평균 <b className="text-amber-300">{avgSpend.label}</b>
+                                <span className="font-bold text-slate-600">
+                                  📊 평균 <b className="text-indigo-600">{avgSpend.label}</b>
                                 </span>
-                                <span className="text-slate-500">·</span>
-                                <span className="font-extrabold text-emerald-400">
+                                <span className="text-slate-300">·</span>
+                                <span className="font-extrabold text-emerald-600">
                                   내 예산 {formatKRW(pinTotalKRW)}
                                 </span>
                               </div>
@@ -3424,7 +3741,7 @@
                                   onClick={() =>
                                     setExpandedPinId((prev) => (prev === pin.id ? null : pin.id))
                                   }
-                                  className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-700 border border-slate-700 text-[11px] font-extrabold text-indigo-400"
+                                  className="px-2.5 py-1 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-[11px] font-extrabold text-indigo-600 transition shadow-sm"
                                 >
                                   {isExpanded ? "접기 ▴" : "상세·예산 ▾"}
                                 </button>
@@ -3433,7 +3750,7 @@
                                   <button
                                     type="button"
                                     onClick={() => handleCompleteAndMoveNext(pin.id)}
-                                    className="px-2.5 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] shadow-sm"
+                                    className="px-2.5 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[11px] shadow-sm transition"
                                   >
                                     ✅ 완료
                                   </button>
@@ -3447,7 +3764,7 @@
                                         )
                                       )
                                     }
-                                    className="px-2 py-1 rounded-xl bg-slate-900 text-slate-400 text-[11px] font-bold border border-slate-700"
+                                    className="px-2 py-1 rounded-xl bg-slate-100 text-slate-500 text-[11px] font-bold border border-slate-200 transition"
                                   >
                                     ↩ 취소
                                   </button>
@@ -3455,20 +3772,20 @@
                               </div>
                             </div>
 
-                            {/* 🔽 카드를 눌렀을 때만 펼쳐지는 깔끔한 상세 서랍 (평균값 원터치 담기 + 메모 + 지출 관리) */}
+                            {/* 🔽 펼쳐지는 상세 서랍 */}
                             {isExpanded && (
                               <div
-                                className="mt-3 pt-3 border-t border-slate-700/80 space-y-3"
+                                className="mt-3 pt-3 border-t border-slate-200/80 space-y-3"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                {/* 📊 구글 맵 방문객 인당 평균 지출액 & 원터치 예산 담기 */}
-                                <div className="google-avg-spend-box p-3 rounded-2xl space-y-2">
+                                {/* 📊 구글 맵 방문객 인당 평균 지출액 */}
+                                <div className="p-3 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-2">
                                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                                    <span className="spend-tag text-[11px] font-extrabold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                    <span className="text-[11px] font-extrabold text-indigo-700 bg-white px-2.5 py-0.5 rounded-full border border-indigo-100 flex items-center gap-1 shadow-sm">
                                       <span>📊</span>
                                       <span>구글 맵 방문객 인당 평균</span>
                                     </span>
-                                    <span className="spend-price text-xs sm:text-sm font-black">
+                                    <span className="text-xs sm:text-sm font-black text-indigo-900">
                                       {avgSpend.label} (약 {formatKRW(avgSpend.avgYen * exchangeRate)})
                                     </span>
                                   </div>
@@ -3476,14 +3793,14 @@
                                     <button
                                       type="button"
                                       onClick={() => handleApplyGoogleAvgSpend(pin, 1)}
-                                      className="flex-1 py-1.5 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 keep-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
+                                      className="flex-1 py-1.5 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
                                     >
                                       ＋ 1인 평균({formatJPY(avgSpend.avgYen)}) 담기
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => handleApplyGoogleAvgSpend(pin, peopleCount)}
-                                      className="flex-1 py-1.5 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
+                                      className="flex-1 py-1.5 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[11px] sm:text-xs shadow-sm transition active:scale-[0.98]"
                                     >
                                       ＋ {peopleCount}인({formatJPY(avgSpend.avgYen * peopleCount)}) 담기
                                     </button>
@@ -3492,7 +3809,7 @@
 
                                 {/* 이름·카테고리 수정 & 구글맵 바로가기 */}
                                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                                  <span className="text-[11px] font-extrabold text-indigo-400">
+                                  <span className="text-[11px] font-extrabold text-indigo-700">
                                     ✨ 장소 설정 · 메모 · 예산 항목
                                   </span>
                                   <div className="flex items-center gap-1.5">
@@ -3507,7 +3824,7 @@
                                           setEditCategoryText(pin.category);
                                         }
                                       }}
-                                      className="text-[11px] font-bold text-amber-300 bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-xl border border-slate-700"
+                                      className="text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200 shadow-sm transition"
                                     >
                                       {editingPinId === pin.id ? "취소" : "✏️ 이름·카테고리 수정"}
                                     </button>
@@ -3517,7 +3834,7 @@
                                       )}`}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="text-[11px] font-bold text-indigo-400 bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-xl border border-slate-700"
+                                      className="text-[11px] font-bold text-indigo-600 bg-white hover:bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200 shadow-sm transition"
                                     >
                                       🗺️ 구글맵↗
                                     </a>
@@ -3525,12 +3842,12 @@
                                 </div>
 
                                 {editingPinId === pin.id && (
-                                  <div className="p-2.5 rounded-2xl bg-slate-950 border border-indigo-500/50 space-y-2">
+                                  <div className="p-2.5 rounded-2xl bg-white border border-indigo-200 space-y-2 shadow-sm">
                                     <div className="flex flex-col sm:flex-row gap-2">
                                       <select
                                         value={editCategoryText}
                                         onChange={(e) => setEditCategoryText(e.target.value)}
-                                        className="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white"
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs text-slate-900"
                                       >
                                         <option>🏨 숙소·호텔</option>
                                         <option>📸 명소·포토존</option>
@@ -3550,12 +3867,12 @@
                                           autoComplete="off"
                                           value={editNameText}
                                           onChange={(e) => setEditNameText(e.target.value)}
-                                          className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs sm:text-sm text-white"
+                                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
                                         />
                                         <button
                                           type="button"
                                           onClick={() => handleSavePinEdit(pin.id)}
-                                          className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3.5 py-2 rounded-xl text-xs font-black"
+                                          className="bg-emerald-500 hover:bg-emerald-600 text-white px-3.5 py-2 rounded-xl text-xs font-black shadow-sm"
                                         >
                                           저장
                                         </button>
@@ -3564,35 +3881,23 @@
                                   </div>
                                 )}
 
-                                {/* 이전/다음 장소 도보 소요시간 요약 */}
-                                {(transitFromPrev || transitToNext) && (
-                                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1">
-                                    {transitFromPrev && (
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-slate-400 truncate">
-                                          ⬅️ <b>{prevPin.name}</b>에서:
-                                        </span>
-                                        <span className="font-extrabold text-emerald-400 shrink-0">
-                                          🚶 도보 약 {transitFromPrev.walkFormatted} ({transitFromPrev.distanceKm}km)
-                                        </span>
-                                      </div>
-                                    )}
-                                    {transitToNext && (
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-slate-400 truncate">
-                                          ➡️ 다음 <b>{nextPin.name}</b>까지:
-                                        </span>
-                                        <span className="font-extrabold text-emerald-400 shrink-0">
-                                          🚶 도보 약 {transitToNext.walkFormatted} ({transitToNext.distanceKm}km)
-                                        </span>
-                                      </div>
-                                    )}
+                                {/* 다음 장소 도보 소요시간 요약 */}
+                                {transitToNext && (
+                                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-[11px] space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-slate-600 truncate">
+                                        ➡️ 다음 <b>{nextPin.name}</b>까지:
+                                      </span>
+                                      <span className="font-extrabold text-emerald-600 shrink-0">
+                                        🚶 도보 약 {transitToNext.walkFormatted} ({transitToNext.distanceKm}km)
+                                      </span>
+                                    </div>
                                   </div>
                                 )}
 
                                 {/* 📝 이 장소의 메모 및 꿀팁 */}
                                 <div>
-                                  <label className="block text-xs font-extrabold text-slate-300 mb-1">
+                                  <label className="block text-xs font-extrabold text-slate-700 mb-1">
                                     📝 장소 메모 · 영업시간 · 예약번호
                                   </label>
                                   <textarea
@@ -3609,17 +3914,17 @@
                                       );
                                     }}
                                     placeholder="영업시간, 예약번호, 체크인 시간, 추천 메뉴 등을 자유롭게 적어두세요"
-                                    className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl p-2.5 text-xs sm:text-sm text-white resize-none"
+                                    className="w-full bg-white border border-slate-200 focus:border-indigo-500 focus:outline-none rounded-xl p-2.5 text-xs sm:text-sm text-slate-900 resize-none shadow-inner"
                                   />
                                 </div>
 
                                 {/* 🛍️ 내 지출 예산 항목 추가 & 체크리스트 */}
                                 <div className="space-y-2">
                                   <div className="flex items-center justify-between">
-                                    <label className="text-xs font-extrabold text-slate-300">
+                                    <label className="text-xs font-extrabold text-slate-700">
                                       🛍️ 이 장소의 지출·예산 항목 ({pin.items.length}건)
                                     </label>
-                                    <span className="text-xs font-black text-emerald-400">
+                                    <span className="text-xs font-black text-emerald-600">
                                       합계: {formatKRW(pinTotalKRW)}
                                     </span>
                                   </div>
@@ -3637,13 +3942,13 @@
                                       placeholder="항목명 (예: 숙소비, 라멘, 입장권)"
                                       value={newItemTitle}
                                       onChange={(e) => setNewItemTitle(e.target.value)}
-                                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 shadow-inner"
                                     />
                                     <div className="flex gap-1.5">
                                       <select
                                         value={inputCurrency}
                                         onChange={(e) => setInputCurrency(e.target.value)}
-                                        className="bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-xs font-extrabold text-amber-300"
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold text-indigo-700"
                                       >
                                         <option value="JPY">엔화(¥)</option>
                                         <option value="KRW">원화(₩)</option>
@@ -3654,11 +3959,11 @@
                                         placeholder={inputCurrency === "JPY" ? "1500 (엔)" : "15000 (원)"}
                                         value={newItemAmount}
                                         onChange={(e) => setNewItemAmount(e.target.value)}
-                                        className="w-28 sm:w-32 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-emerald-400 font-bold focus:outline-none focus:border-indigo-500"
+                                        className="w-28 sm:w-32 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-emerald-600 font-bold focus:outline-none focus:border-indigo-500 shadow-inner"
                                       />
                                       <button
                                         type="submit"
-                                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shrink-0"
+                                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shrink-0 shadow-sm"
                                       >
                                         ＋ 추가
                                       </button>
@@ -3670,10 +3975,10 @@
                                       {pin.items.map((item) => (
                                         <div
                                           key={item.id}
-                                          className={`flex items-center justify-between p-2.5 rounded-xl border ${
+                                          className={`flex items-center justify-between p-2.5 rounded-xl border transition ${
                                             item.bought
-                                              ? "bg-emerald-950/20 border-emerald-500/40"
-                                              : "bg-slate-950 border-slate-800"
+                                              ? "bg-emerald-50/70 border-emerald-200"
+                                              : "bg-white/80 border-slate-200"
                                           }`}
                                         >
                                           <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
@@ -3702,7 +4007,7 @@
                                               className={`text-xs font-bold truncate ${
                                                 item.bought
                                                   ? "line-through text-slate-400"
-                                                  : "text-slate-200"
+                                                  : "text-slate-800"
                                               }`}
                                             >
                                               {item.title}
@@ -3710,7 +4015,7 @@
                                           </label>
                                           <div className="flex items-center gap-2 shrink-0 ml-2">
                                             <div className="text-right">
-                                              <div className="text-xs font-extrabold text-emerald-400">
+                                              <div className="text-xs font-extrabold text-emerald-600">
                                                 {formatKRW(item.price)}
                                               </div>
                                               <div className="text-[10px] text-slate-400">
@@ -3739,7 +4044,7 @@
                                                   }
                                                 )
                                               }
-                                              className="w-6 h-6 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 text-xs font-bold flex items-center justify-center"
+                                              className="w-6 h-6 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold flex items-center justify-center transition"
                                             >
                                               ✕
                                             </button>
@@ -3753,14 +4058,14 @@
                             )}
                           </div>
 
-                          {/* 🚶 코스 사이 슬림한 1줄 도보 연결 바 (대중교통 제거 & 답답함 없이 깔끔한 여백) */}
+                          {/* 🚶 코스 사이 슬림한 1줄 도보 연결 바 (Requirement 1 .route-time-badge) */}
                           {transitToNext && (
-                            <div className="my-1 px-3 py-1.5 flex items-center justify-between gap-2 rounded-xl bg-slate-800/60 border border-slate-700/60 text-[11px]">
+                            <div className="route-time-badge my-1 px-3 py-2 flex items-center justify-between gap-2 rounded-xl text-[11px] shadow-sm">
                               <div className="flex items-center gap-1.5 min-w-0 truncate">
-                                <span className="text-emerald-400 font-extrabold">
+                                <span className="font-extrabold text-indigo-700">
                                   🚶 도보 약 {transitToNext.walkFormatted}
                                 </span>
-                                <span className="text-slate-400">
+                                <span className="text-slate-500">
                                   ({transitToNext.distanceKm}km)
                                 </span>
                               </div>
@@ -3768,14 +4073,14 @@
                                 <button
                                   type="button"
                                   onClick={() => animateBetweenPins(pin, nextPin)}
-                                  className="px-2 py-0.5 rounded-lg timeline-btn keep-white text-[10px] font-extrabold"
+                                  className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold shadow-sm"
                                 >
                                   ▶ 이동
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => openGoogleMapsTransit(pin, nextPin)}
-                                  className="px-2 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-700 text-slate-300 text-[10px] font-bold border border-slate-700"
+                                  className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-slate-700 text-[10px] font-bold border border-slate-200 shadow-sm"
                                 >
                                   길찾기↗
                                 </button>
@@ -3792,27 +4097,27 @@
           </main>
 
           {/* =================================================================
-              📝 메인 영역 2: '대형 자유 메모장 & 체크리스트' 탭
+              📝 메인 영역 2: '대형 자유 메모장 & 체크리스트' 탭 (Apple Liquid Glass)
              ================================================================= */}
           {currentView === "notepad" && (
             <main className="flex-1 max-w-[1160px] w-full mx-auto p-2.5 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {/* 좌측/상단: 대형 자유 메모장 (8칸) */}
-              <section className="lg:col-span-7 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-xl min-h-[58vh]">
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+              {/* 좌측/상단: 대형 자유 메모장 */}
+              <section className="lg:col-span-7 flex flex-col glass-card p-4 sm:p-6 shadow-xl min-h-[58vh]">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200/80">
                   <div>
-                    <h2 className="text-base sm:text-xl font-black text-white flex items-center gap-2">
+                    <h2 className="text-base sm:text-xl font-black text-slate-900 flex items-center gap-2">
                       <span>📝 대형 자유 메모장</span>
-                      <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-2.5 py-0.5 rounded-full">
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
                         ☁️ 실시간 공유됨
                       </span>
                     </h2>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-500 mt-0.5">
                       여행 계획, 가고 싶은 맛집 후보, 항공편·숙소 예약 정보를 자유롭게 적어두세요!
                     </p>
                   </div>
                   <button
                     onClick={handleAddNewNoteSheet}
-                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white text-xs font-extrabold shadow"
+                    className="btn-primary text-xs font-extrabold shadow-sm"
                   >
                     ＋ 새 메모 시트 추가
                   </button>
@@ -3824,10 +4129,8 @@
                     <button
                       key={n.id}
                       onClick={() => setActiveNoteId(n.id)}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-extrabold shrink-0 border transition ${
-                        activeNoteObj.id === n.id
-                          ? "bg-indigo-600 keep-white border-indigo-500 shadow"
-                          : "bg-slate-800 text-slate-300 border-slate-700 hover:border-indigo-400"
+                      className={`day-chip ${
+                        activeNoteObj.id === n.id ? "day-chip-active" : "day-chip-idle"
                       }`}
                     >
                       {n.title}
@@ -3835,7 +4138,7 @@
                   ))}
                 </div>
 
-                {/* 선택된 메모장 제목 & 초대형 텍스트 입력창 (빨간 물결 맞춤법 표시 제거됨) */}
+                {/* 선택된 메모장 제목 & 초대형 텍스트 입력창 */}
                 <div className="flex-1 flex flex-col space-y-3 mt-1">
                   <div className="flex items-center justify-between gap-2">
                     <input
@@ -3847,7 +4150,7 @@
                       value={activeNoteObj.title}
                       onChange={(e) => handleUpdateNoteTitle(e.target.value)}
                       placeholder="메모장 제목을 입력하세요"
-                      className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-sm sm:text-base font-extrabold text-white focus:outline-none focus:border-indigo-500"
+                      className="flex-1 min-w-0 bg-white border border-slate-200 rounded-2xl px-4 py-2.5 text-sm sm:text-base font-extrabold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-inner"
                     />
                     {notes.length > 1 && (
                       <button
@@ -3864,7 +4167,7 @@
                             }
                           )
                         }
-                        className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 text-xs font-extrabold shrink-0"
+                        className="px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 text-xs font-extrabold shrink-0 transition"
                       >
                         시트 삭제
                       </button>
@@ -3878,11 +4181,17 @@
                     autoComplete="off"
                     value={activeNoteObj.content}
                     onChange={(e) => handleUpdateNoteContent(e.target.value)}
-                    placeholder={`여기에 자유롭게 적으세요!\n\n예시:\n- 1일차 저녁엔 도톤보리 근처 야키니쿠 먹기\n- 분위기 좋은 루프탑 카페 & 디저트 맛집 찾아두기\n- 돈키호테 쇼핑 리스트: 동전파스, 샤론파스, 휴족시간\n- 숙소 체크인 15:00 / 체크아웃 11:00`}
-                    className="flex-1 w-full min-h-[340px] sm:min-h-[440px] bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-5 text-sm sm:text-base leading-relaxed text-white focus:outline-none focus:border-indigo-500 resize-y"
+                    placeholder={`여기에 자유롭게 적으세요!
+
+예시:
+- 1일차 저녁엔 도톤보리 근처 야키니쿠 먹기
+- 분위기 좋은 루프탑 카페 & 디저트 맛집 찾아두기
+- 돈키호테 쇼핑 리스트: 동전파스, 샤론파스, 휴족시간
+- 숙소 체크인 15:00 / 체크아웃 11:00`}
+                    className="flex-1 w-full min-h-[340px] sm:min-h-[440px] bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 text-sm sm:text-base leading-relaxed text-slate-900 focus:outline-none focus:border-indigo-500 resize-y shadow-inner"
                   />
 
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
                     <span>마지막 작성: {activeNoteObj.updatedAt}</span>
                     <span>글자 수: {(activeNoteObj.content || "").length}자 · 자동 클라우드 저장</span>
                   </div>
@@ -3890,11 +4199,11 @@
               </section>
 
               {/* 우측/하단: 준비물 & 할 일 체크리스트 */}
-              <section className="lg:col-span-5 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-xl">
-                <h3 className="text-base sm:text-lg font-black text-white">
+              <section className="lg:col-span-5 flex flex-col glass-card p-4 sm:p-6 shadow-xl">
+                <h3 className="text-base sm:text-lg font-black text-slate-900">
                   ✅ 여행 준비물 & 할 일 체크리스트
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5 mb-3">
+                <p className="text-xs text-slate-500 mt-0.5 mb-3">
                   함께 챙겨야 할 준비물이나 예약 할 일을 체크하세요.
                 </p>
 
@@ -3908,11 +4217,11 @@
                     value={newCheckText}
                     onChange={(e) => setNewCheckText(e.target.value)}
                     placeholder="준비물이나 할 일 추가 (예: 유심/eSIM 구매)"
-                    className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-500"
+                    className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500 shadow-inner"
                   />
                   <button
                     type="submit"
-                    className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shrink-0"
+                    className="btn-primary py-2.5 px-4 text-xs font-black shrink-0 shadow-sm"
                   >
                     ＋ 추가
                   </button>
@@ -3922,10 +4231,10 @@
                   {checklist.map((item) => (
                     <div
                       key={item.id}
-                      className={`flex items-center justify-between p-3 rounded-2xl border ${
+                      className={`flex items-center justify-between p-3 rounded-2xl border transition ${
                         item.done
-                          ? "bg-emerald-950/20 border-emerald-500/40"
-                          : "bg-slate-950 border-slate-800"
+                          ? "bg-emerald-50/50 border-emerald-200"
+                          : "bg-white/80 border-slate-200"
                       }`}
                     >
                       <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
@@ -3941,7 +4250,7 @@
                         />
                         <span
                           className={`text-xs sm:text-sm font-bold break-keep ${
-                            item.done ? "line-through text-slate-400" : "text-white"
+                            item.done ? "line-through text-slate-400" : "text-slate-800"
                           }`}
                         >
                           {item.text}
@@ -3958,7 +4267,7 @@
                             }
                           )
                         }
-                        className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 text-xs font-bold flex items-center justify-center shrink-0 ml-2"
+                        className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold flex items-center justify-center shrink-0 ml-2 transition"
                       >
                         ✕
                       </button>
@@ -3970,230 +4279,254 @@
           )}
 
           {/* =================================================================
-              💰 메인 영역 3: 예산 · 정산 · 장소별 평균값 비교 탭
+              💰 메인 영역 3: 예산 · 정산 · 장소별 평균값 비교 탭 (Requirement 5)
              ================================================================= */}
-          {currentView === "budget" && (
-            <main className="flex-1 max-w-[1160px] w-full mx-auto p-2.5 sm:p-4 space-y-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs sm:text-sm font-extrabold text-slate-300">
-                  💴 일본 엔화(¥) 자동 환산 기준 (1엔당 원화 설정):
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400 font-bold">1엔 =</span>
-                  <input
-                    type="number"
-                    step="0.05"
-                    spellCheck={false}
-                    value={exchangeRate}
-                    onChange={(e) => setExchangeRate(Number(e.target.value) || 9.0)}
-                    className="w-24 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-extrabold text-amber-300 text-right"
-                  />
-                  <span className="text-xs text-slate-300 font-bold">원</span>
-                </div>
-              </div>
+          {currentView === "budget" && (() => {
+            const budgetProgress =
+              budgetStats.totalPlannedKRW > 0
+                ? Math.min(100, Math.round((budgetStats.totalBoughtKRW / budgetStats.totalPlannedKRW) * 100))
+                : 0;
 
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-3xl">
-                  <span className="text-xs font-bold text-slate-400">내 총 계획 예산</span>
-                  <div className="text-lg sm:text-2xl font-black text-white mt-1">
-                    {formatKRW(budgetStats.totalPlannedKRW)}
+            return (
+              <main className="flex-1 max-w-[1160px] w-full mx-auto p-2.5 sm:p-4 space-y-3.5">
+                {/* 엔화 환산 기준 카드 */}
+                <div className="glass-card p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs sm:text-sm font-extrabold text-slate-700">
+                    💴 일본 엔화(¥) 자동 환산 기준 (1엔당 원화 설정):
                   </div>
-                  <div className="text-xs sm:text-sm font-bold text-amber-300 mt-0.5">
-                    약 {formatJPY(budgetStats.totalPlannedJPY)}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500 font-bold">1엔 =</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      spellCheck={false}
+                      value={exchangeRate}
+                      onChange={(e) => setExchangeRate(Number(e.target.value) || 9.0)}
+                      className="w-24 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-extrabold text-indigo-700 text-right shadow-inner"
+                    />
+                    <span className="text-xs text-slate-700 font-bold">원</span>
                   </div>
                 </div>
 
-                <div className="bg-slate-900 border border-emerald-500/30 p-4 rounded-3xl">
-                  <span className="text-xs font-bold text-emerald-400">📊 구글맵 1인 평균 총합</span>
-                  <div className="text-lg sm:text-2xl font-black text-emerald-400 mt-1">
-                    {formatKRW(budgetStats.totalGoogleAvgKRWPerPerson)}
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    코스 전체 1인 평균 ({formatJPY(budgetStats.totalGoogleAvgYenPerPerson)})
-                  </p>
-                </div>
-
-                <div className="bg-slate-900 border border-amber-500/30 p-4 rounded-3xl">
-                  <span className="text-xs font-bold text-amber-400">결제 완료 / 남은 예산</span>
-                  <div className="text-lg sm:text-2xl font-black text-amber-300 mt-1">
-                    {formatKRW(budgetStats.remainingKRW)}
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    완료: {formatKRW(budgetStats.totalBoughtKRW)}
-                  </p>
-                </div>
-
-                <div className="bg-slate-900 border border-indigo-500/40 p-4 rounded-3xl">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-xs font-bold text-indigo-400">1인당 정산 (1/N)</span>
-                    <div className="flex items-center gap-1 bg-slate-950/60 px-2 py-0.5 rounded-lg border border-slate-800">
-                      <button
-                        onClick={() => setPeopleCount((c) => Math.max(1, c - 1))}
-                        className="text-xs font-black text-indigo-400 px-1"
-                      >
-                        -
-                      </button>
-                      <span className="text-xs font-extrabold text-white">{peopleCount}명</span>
-                      <button
-                        onClick={() => setPeopleCount((c) => c + 1)}
-                        className="text-xs font-black text-indigo-400 px-1"
-                      >
-                        +
-                      </button>
+                {/* 2단 요약 카드 (Requirement 5: .budget-summary & .budget-stat) */}
+                <div className="glass-card budget-summary p-3">
+                  <div className="budget-stat bg-indigo-50/70 border border-indigo-100">
+                    <div className="text-[11px] font-bold text-indigo-700">총 예산</div>
+                    <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
+                      {formatKRW(budgetStats.totalPlannedKRW)}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      약 {formatJPY(budgetStats.totalPlannedJPY)}
                     </div>
                   </div>
-                  <div className="text-lg sm:text-2xl font-black text-white mt-1">
-                    {formatKRW(budgetStats.perPersonKRW)}
-                  </div>
-                  <div className="text-xs font-bold text-indigo-400 mt-0.5">
-                    약 {formatJPY(budgetStats.perPersonJPY)}
-                  </div>
-                </div>
-              </div>
 
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <h3 className="text-sm sm:text-base font-extrabold text-white">
-                    📊 장소별 구글 맵 평균 지출액 vs 내 예산 관리
-                  </h3>
-                  <span className="text-[11px] text-slate-400">
-                    각 장소의 방문객 평균 금액을 원터치로 내 예산에 담을 수 있습니다
-                  </span>
-                </div>
-
-                {pins.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-slate-400">
-                    등록된 코스가 없습니다. 장소를 먼저 추가해주세요.
+                  <div className="budget-stat bg-emerald-50/70 border border-emerald-100">
+                    <div className="text-[11px] font-bold text-emerald-700">지출 완료</div>
+                    <div className="text-lg sm:text-2xl font-black text-emerald-700 mt-1">
+                      {formatKRW(budgetStats.totalBoughtKRW)}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      남은 예산: {formatKRW(budgetStats.remainingKRW)}
+                    </div>
                   </div>
-                ) : (
-                  pins.map((pin, idx) => {
-                    const pinTotal = pin.items.reduce((s, i) => s + Number(i.price || 0), 0);
-                    const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
-                    return (
-                      <div
-                        key={pin.id}
-                        className="p-3.5 sm:p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <span className="font-extrabold text-xs sm:text-sm text-white">
-                              #{idx + 1} {pin.name}
-                            </span>
-                            <span className="ml-2 text-[11px] text-amber-300 font-bold">
-                              (구글맵 인당 평균: {avgSpend.label} / 약{" "}
-                              {formatKRW(avgSpend.avgYen * exchangeRate)})
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={() => handleApplyGoogleAvgSpend(pin, 1)}
-                              className="px-2.5 py-1 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-400 text-[11px] font-extrabold"
-                            >
-                              ＋ 1인 평균 담기
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleApplyGoogleAvgSpend(pin, peopleCount)}
-                              className="px-2.5 py-1 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-400 text-[11px] font-extrabold"
-                            >
-                              ＋ {peopleCount}인 평균 담기
-                            </button>
-                            <span className="font-black text-xs sm:text-sm text-emerald-400 ml-1">
-                              내 예산: {formatKRW(pinTotal)} (
-                              {formatJPY(Math.round(pinTotal / exchangeRate))})
-                            </span>
-                          </div>
-                        </div>
 
-                        {pin.items.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 pt-1">
-                            {pin.items.map((it) => (
-                              <span
-                                key={it.id}
-                                className="text-xs px-2.5 py-1 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 flex items-center gap-1.5"
-                              >
-                                <span>
-                                  {it.bought ? "✅ " : "🛍️ "} {it.title}: <b>{formatKRW(it.price)}</b>
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    requestDeleteConfirm(
-                                      "예산 항목을 삭제하시겠습니까?",
-                                      `'${it.title}' (${formatKRW(it.price)}) 항목을 삭제합니다.`,
-                                      () => {
-                                        setPins((prev) =>
-                                          prev.map((p) =>
-                                            p.id === pin.id
-                                              ? {
-                                                  ...p,
-                                                  items: p.items.filter((x) => x.id !== it.id)
-                                                }
-                                              : p
-                                          )
-                                        );
-                                      }
-                                    )
-                                  }
-                                  className="text-slate-400 hover:text-rose-400 font-black ml-0.5"
-                                >
-                                  ✕
-                                </button>
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                  <div className="budget-stat bg-cyan-50/70 border border-cyan-100">
+                    <div className="text-[11px] font-bold text-cyan-700">📊 구글맵 1인 평균 총합</div>
+                    <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
+                      {formatKRW(budgetStats.totalGoogleAvgKRWPerPerson)}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      전체 코스 ({formatJPY(budgetStats.totalGoogleAvgYenPerPerson)})
+                    </div>
+                  </div>
+
+                  <div className="budget-stat bg-purple-50/70 border border-purple-100">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold text-purple-700">1인당 정산 (1/N)</span>
+                      <div className="flex items-center gap-1 bg-white px-2 py-0.5 rounded-lg border border-purple-200 shadow-sm">
+                        <button
+                          onClick={() => setPeopleCount((c) => Math.max(1, c - 1))}
+                          className="text-xs font-black text-purple-700 px-1"
+                        >
+                          -
+                        </button>
+                        <span className="text-xs font-extrabold text-slate-800">{peopleCount}명</span>
+                        <button
+                          onClick={() => setPeopleCount((c) => c + 1)}
+                          className="text-xs font-black text-purple-700 px-1"
+                        >
+                          +
+                        </button>
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </main>
-          )}
+                    </div>
+                    <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
+                      {formatKRW(budgetStats.perPersonKRW)}
+                    </div>
+                    <div className="text-[11px] text-purple-700 mt-0.5">
+                      약 {formatJPY(budgetStats.perPersonJPY)}
+                    </div>
+                  </div>
+                </div>
 
-          {/* 📱 모바일 하단 앱 네비게이션 (중복 코스·상세 탭 제거 → 3개 핵심 탭으로 넓고 쾌적하게 배치) */}
-          <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 grid grid-cols-3 px-3 py-1.5 gap-1 shadow-2xl">
+                {/* 진행률 바 (Requirement 5: .budget-progress-track & .budget-progress-fill) */}
+                <div className="glass-card p-4 space-y-2">
+                  <div className="flex justify-between items-center text-xs font-bold">
+                    <span className="text-slate-600">
+                      예산 소진율 ({formatKRW(budgetStats.totalBoughtKRW)} / {formatKRW(budgetStats.totalPlannedKRW)})
+                    </span>
+                    <span className="text-indigo-600 font-black">{budgetProgress}%</span>
+                  </div>
+                  <div className="budget-progress-track">
+                    <div className="budget-progress-fill" style={{ width: `${budgetProgress}%` }} />
+                  </div>
+                </div>
+
+                {/* 장소별 예산 & 구글맵 평균값 리스트 */}
+                <div className="glass-card p-4 sm:p-6 space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-200/80">
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                      📊 장소별 구글 맵 평균 지출액 vs 내 예산 관리
+                    </h3>
+                    <span className="text-[11px] text-slate-500">
+                      각 장소의 방문객 평균 금액을 원터치로 내 예산에 담을 수 있습니다
+                    </span>
+                  </div>
+
+                  {pins.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-slate-400">
+                      등록된 코스가 없습니다. 장소를 먼저 추가해주세요.
+                    </div>
+                  ) : (
+                    pins.map((pin, idx) => {
+                      const pinTotal = (pin.items || []).reduce((s, i) => s + Number(i.price || 0), 0);
+                      const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
+                      return (
+                        <div
+                          key={pin.id}
+                          className="p-3.5 sm:p-4 rounded-2xl bg-white/80 border border-slate-200 space-y-2.5 shadow-sm"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <span className="font-extrabold text-xs sm:text-sm text-slate-900">
+                                #{idx + 1} {pin.name}
+                              </span>
+                              <span className="ml-2 text-[11px] text-indigo-600 font-bold">
+                                (구글맵 인당 평균: {avgSpend.label} / 약{" "}
+                                {formatKRW(avgSpend.avgYen * exchangeRate)})
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => handleApplyGoogleAvgSpend(pin, 1)}
+                                className="px-2.5 py-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-[11px] font-extrabold transition"
+                              >
+                                ＋ 1인 평균 담기
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleApplyGoogleAvgSpend(pin, peopleCount)}
+                                className="px-2.5 py-1 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-extrabold transition"
+                              >
+                                ＋ {peopleCount}인 평균 담기
+                              </button>
+                              <span className="font-black text-xs sm:text-sm text-emerald-600 ml-1">
+                                내 예산: {formatKRW(pinTotal)} (
+                                {formatJPY(Math.round(pinTotal / exchangeRate))})
+                              </span>
+                            </div>
+                          </div>
+
+                          {pin.items.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {pin.items.map((it) => (
+                                <span
+                                  key={it.id}
+                                  className="text-xs px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 flex items-center gap-1.5 shadow-sm"
+                                >
+                                  <span>
+                                    {it.bought ? "✅ " : "🛍️ "} {it.title}: <b>{formatKRW(it.price)}</b>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      requestDeleteConfirm(
+                                        "예산 항목을 삭제하시겠습니까?",
+                                        `'${it.title}' (${formatKRW(it.price)}) 항목을 삭제합니다.`,
+                                        () => {
+                                          setPins((prev) =>
+                                            prev.map((p) =>
+                                              p.id === pin.id
+                                                ? {
+                                                    ...p,
+                                                    items: p.items.filter((x) => x.id !== it.id)
+                                                  }
+                                                : p
+                                            )
+                                          );
+                                        }
+                                      )
+                                    }
+                                    className="text-slate-400 hover:text-rose-600 font-black ml-0.5"
+                                  >
+                                    ✕
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </main>
+            );
+          })()}
+
+          {/* =================================================================
+              📱 모바일 하단 앱 네비게이션 (Requirement 7: .bottom-tab-bar & .tab-item)
+             ================================================================= */}
+          <nav className="lg:hidden bottom-tab-bar">
             <button
               onClick={() => switchAppView("split")}
-              className={`flex flex-col items-center py-1.5 rounded-2xl text-xs font-extrabold transition ${
-                currentView === "split" ? "text-indigo-400 bg-indigo-500/15" : "text-slate-400"
-              }`}
+              className={`tab-item ${currentView === "split" ? "tab-item-active" : ""}`}
             >
-              <span className="text-base leading-none mb-0.5">🗺️</span>
+              <span className="text-lg leading-none mb-0.5">🗺️</span>
               <span>지도+코스({pins.length})</span>
             </button>
             <button
               onClick={() => switchAppView("notepad")}
-              className={`flex flex-col items-center py-1.5 rounded-2xl text-xs font-extrabold transition ${
-                currentView === "notepad" ? "text-amber-400 bg-amber-500/15" : "text-slate-400"
-              }`}
+              className={`tab-item ${currentView === "notepad" ? "tab-item-active" : ""}`}
             >
-              <span className="text-base leading-none mb-0.5">📝</span>
+              <span className="text-lg leading-none mb-0.5">📝</span>
               <span>메모장</span>
             </button>
             <button
               onClick={() => switchAppView("budget")}
-              className={`flex flex-col items-center py-1.5 rounded-2xl text-xs font-extrabold transition ${
-                currentView === "budget" ? "text-emerald-400 bg-emerald-500/15" : "text-slate-400"
-              }`}
+              className={`tab-item ${currentView === "budget" ? "tab-item-active" : ""}`}
             >
-              <span className="text-base leading-none mb-0.5">💰</span>
+              <span className="text-lg leading-none mb-0.5">💰</span>
               <span>예산·정산</span>
             </button>
           </nav>
 
-          {/* 검색 모달 */}
+          {/* =================================================================
+              🔍 장소 검색 모달 (Requirement 6: .modal-overlay & .modal-panel)
+             ================================================================= */}
           {showAddModal && (
-            <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3">
-              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-xl w-full p-4 sm:p-6 shadow-2xl space-y-3.5 max-h-[90vh] overflow-y-auto">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-sm sm:text-lg text-white">
+            <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+              <div
+                className="modal-panel max-w-xl max-h-[90vh] overflow-y-auto space-y-3.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <h3 className="font-extrabold text-sm sm:text-lg text-slate-900">
                     📍 구글맵 링크 & 다국어(한/일/영) 장소 검색
                   </h3>
                   <button
                     onClick={() => setShowAddModal(false)}
-                    className="text-slate-400 hover:text-white text-sm font-bold px-2 py-1"
+                    className="text-slate-400 hover:text-slate-700 text-sm font-bold px-2 py-1"
                   >
                     ✕ 닫기
                   </button>
@@ -4204,7 +4537,7 @@
                     <select
                       value={customCategory}
                       onChange={(e) => setCustomCategory(e.target.value)}
-                      className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"
+                      className="bg-white border border-slate-300 rounded-xl px-3 py-2.5 text-xs text-slate-900"
                     >
                       <option>🏨 숙소·호텔</option>
                       <option>📸 명소·포토존</option>
@@ -4237,12 +4570,12 @@
                           }
                         }}
                         placeholder="구글맵 공유 링크 붙여넣기 또는 한글/일어/영어 검색"
-                        className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-500"
+                        className="modal-input flex-1 min-w-0"
                       />
                       <button
                         type="submit"
                         disabled={isSearching}
-                        className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 keep-white font-extrabold text-xs shrink-0"
+                        className="btn-primary shrink-0 text-xs"
                       >
                         {isSearching ? "분석중..." : "🔍 검색"}
                       </button>
@@ -4253,14 +4586,14 @@
                     <button
                       type="button"
                       onClick={handlePasteFromClipboard}
-                      className="w-full py-2 px-3 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-400 text-xs font-extrabold flex items-center justify-center gap-1.5 transition"
+                      className="w-full py-2.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-extrabold flex items-center justify-center gap-1.5 transition"
                     >
                       <span>📋 구글맵 앱에서 '공유 → 복사'한 링크 원터치 붙여넣기</span>
                     </button>
                   </div>
 
                   {translatedInfo && (
-                    <div className="text-[11px] text-indigo-400 bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-500/30">
+                    <div className="text-[11px] text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100">
                       🌐 자동 다국어 변환 검색됨: <b>{translatedInfo.original}</b> → 일문:{" "}
                       <b>{translatedInfo.ja}</b> / 영문: <b>{translatedInfo.en}</b>
                     </div>
@@ -4268,8 +4601,8 @@
                 </form>
 
                 {searchResults.length > 0 && (
-                  <div className="space-y-2 max-h-60 overflow-y-auto bg-slate-950 p-2.5 rounded-2xl border border-indigo-500/50">
-                    <div className="text-xs font-extrabold text-emerald-400 px-1">
+                  <div className="space-y-2 max-h-60 overflow-y-auto bg-slate-50 p-2.5 rounded-2xl border border-indigo-100">
+                    <div className="text-xs font-extrabold text-indigo-700 px-1">
                       ✅ 검색 결과 목록 ({searchResults.length}건) — 인당 평균 지출액 자동 분석됨
                     </div>
                     {searchResults.map((res, idx) => {
@@ -4287,20 +4620,20 @@
                               spendInfo: sp
                             })
                           }
-                          className="p-2.5 rounded-xl bg-slate-900 hover:bg-indigo-950/80 border border-slate-800 hover:border-indigo-500 cursor-pointer flex items-center justify-between gap-2"
+                          className="p-2.5 rounded-xl bg-white hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-300 cursor-pointer flex items-center justify-between gap-2 transition"
                         >
                           <div className="min-w-0">
-                            <div className="text-xs sm:text-sm font-extrabold text-white truncate">
+                            <div className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
                               {res.name}
                             </div>
-                            <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                            <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
                               {res.address}
                             </div>
-                            <div className="text-[11px] text-amber-300 font-bold mt-1">
+                            <div className="text-[11px] text-indigo-600 font-bold mt-1">
                               📊 구글맵 인당 평균: {sp.label} (약 {formatKRW(sp.avgYen * exchangeRate)})
                             </div>
                           </div>
-                          <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500 text-slate-950 text-xs font-black shrink-0">
+                          <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500 text-white text-xs font-black shrink-0 shadow-sm">
                             ＋ 선택
                           </span>
                         </div>
@@ -4310,7 +4643,7 @@
                 )}
 
                 <div>
-                  <div className="text-xs font-bold text-slate-400 mb-1.5">
+                  <div className="text-xs font-bold text-slate-500 mb-1.5">
                     🇯🇵 자주 찾는 인기 장소 빠른 추가
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
@@ -4320,15 +4653,15 @@
                         <div
                           key={i}
                           onClick={() => addPinToMap({ ...p, spendInfo: sp })}
-                          className="p-2.5 rounded-xl bg-slate-950 hover:bg-indigo-950/50 border border-slate-800 cursor-pointer flex items-center justify-between"
+                          className="p-2.5 rounded-xl bg-white hover:bg-indigo-50/50 border border-slate-200 cursor-pointer flex items-center justify-between transition"
                         >
                           <div>
-                            <div className="text-xs font-extrabold text-white">{p.name}</div>
-                            <div className="text-[10px] text-slate-400">
+                            <div className="text-xs font-extrabold text-slate-900">{p.name}</div>
+                            <div className="text-[10px] text-slate-500">
                               {p.category} · 인당 평균 {sp.label}
                             </div>
                           </div>
-                          <span className="text-xs font-bold text-indigo-400">추가 ＋</span>
+                          <span className="text-xs font-bold text-indigo-600">추가 ＋</span>
                         </div>
                       );
                     })}
@@ -4338,37 +4671,42 @@
             </div>
           )}
 
-          {/* ⚙️ 데이터 관리 & 보안 설정 모달 */}
+          {/* =================================================================
+              ⚙️ 데이터 관리 & 보안 설정 모달 (Requirement 6: .modal-overlay & .modal-panel)
+             ================================================================= */}
           {showResetModal && (
-            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-base text-white">⚙️ 클라우드 동기화 및 보안 설정</h3>
+            <div className="modal-overlay" onClick={() => setShowResetModal(false)}>
+              <div
+                className="modal-panel max-w-md max-h-[90vh] overflow-y-auto space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <h3 className="font-extrabold text-base text-slate-900">⚙️ 동기화 및 보안 설정</h3>
                   <button
                     onClick={() => setShowResetModal(false)}
-                    className="text-slate-400 hover:text-white text-sm font-bold"
+                    className="text-slate-400 hover:text-slate-700 text-sm font-bold"
                   >
                     ✕
                   </button>
                 </div>
 
-                {/* 👑 관리자 권한 페이지 열기 & 화면 잠금 */}
-                <div className="p-3.5 rounded-2xl bg-slate-800/80 border border-slate-700 space-y-2.5">
+                {/* 관리자 권한 및 화면 잠금 */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                    <div className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                       <span>👑</span>
-                      <span>비밀번호 지정 · 추가 (관리자 권한)</span>
+                      <span>비밀번호 관리 (관리자 권한)</span>
                     </div>
                     <button
                       type="button"
                       onClick={handleLockScreenNow}
-                      className="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 hover:bg-rose-500/30 transition"
+                      className="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 transition"
                     >
                       🔒 화면 잠그기
                     </button>
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    관리자 전용 비밀번호를 입력하면 접속 허용 비밀번호를 새로 지정·추가하거나 5회 오류로 차단된 IP를 관리할 수 있습니다.
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    관리자 전용 비밀번호를 입력하면 접속 허용 비밀번호를 새로 지정·추가하거나 차단된 IP를 관리할 수 있습니다.
                   </p>
                   <form onSubmit={handleAdminLogin} className="flex items-center gap-1.5">
                     <input
@@ -4376,35 +4714,34 @@
                       value={adminKeyInput}
                       onChange={(e) => setAdminKeyInput(e.target.value)}
                       placeholder="관리자 전용 비밀번호 입력"
-                      className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
+                      className="modal-input flex-1 min-w-0 text-xs py-2"
                     />
                     <button
                       type="submit"
-                      className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shrink-0 transition"
+                      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black shrink-0 transition shadow-sm"
                     >
                       관리자 열기
                     </button>
                   </form>
                   {adminFeedbackMsg && (
-                    <p className="text-[11px] text-rose-400 font-bold">{adminFeedbackMsg}</p>
+                    <p className="text-[11px] text-rose-600 font-bold">{adminFeedbackMsg}</p>
                   )}
                 </div>
 
-                {/* 🎲 매번 바뀌는 원클릭 난수 초대 링크 복사 */}
+                {/* 원클릭 난수 초대 링크 */}
                 <button
                   type="button"
                   onClick={handleGenerateInviteTicket}
-                  className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-pink-500/20 to-indigo-500/20 border border-pink-400/40 text-left hover:opacity-95 transition"
+                  className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-pink-50 to-indigo-50 border border-pink-200 text-left hover:shadow-sm transition"
                 >
-                  <div className="text-xs font-extrabold text-pink-300 flex items-center justify-between">
+                  <div className="text-xs font-extrabold text-pink-700 flex items-center justify-between">
                     <span>🎲 원클릭 난수 초대 링크 복사</span>
-                    <span className="text-[10px] text-pink-400 font-bold">비밀번호 노출 0%</span>
+                    <span className="text-[10px] text-pink-600 font-bold">비밀번호 노출 0%</span>
                   </div>
-                  <p className="text-[11px] text-slate-300 mt-0.5 whitespace-normal">
+                  <p className="text-[11px] text-slate-600 mt-0.5 whitespace-normal">
                     매번 다른 보안 난수 토큰으로 생성되어 실제 비밀번호를 알 수 없으며, 누르는 즉시 플래너가 열립니다.
                   </p>
                 </button>
-
 
                 <button
                   onClick={() => {
@@ -4422,12 +4759,12 @@
                     );
                     setShowResetModal(false);
                   }}
-                  className="w-full p-3.5 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-left"
+                  className="w-full p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-left hover:bg-amber-100/60 transition"
                 >
-                  <div className="text-xs font-extrabold text-amber-300">
+                  <div className="text-xs font-extrabold text-amber-800">
                     📤 이 기기의 현재 일정을 클라우드로 강제 전송
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
+                  <p className="text-[11px] text-slate-600 mt-0.5 whitespace-normal">
                     현재 화면에 보이는 코스와 메모를 연결된 모든 기기에 즉시 똑같이 적용합니다.
                   </p>
                 </button>
@@ -4437,36 +4774,36 @@
                     fetchCloudData(true);
                     setShowResetModal(false);
                   }}
-                  className="w-full p-3.5 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 text-left"
+                  className="w-full p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-left hover:bg-indigo-100/60 transition"
                 >
-                  <div className="text-xs font-extrabold text-indigo-400">
+                  <div className="text-xs font-extrabold text-indigo-700">
                     📥 지금 즉시 클라우드 최신 데이터 불러오기
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
+                  <p className="text-[11px] text-slate-600 mt-0.5 whitespace-normal">
                     다른 기기에서 방금 수정한 내용을 불러옵니다.
                   </p>
                 </button>
 
                 <button
                   onClick={handleRestoreSecuritySnapshot}
-                  className="w-full p-3.5 rounded-2xl bg-cyan-600/20 border border-cyan-500/40 text-left"
+                  className="w-full p-3.5 rounded-2xl bg-cyan-50 border border-cyan-200 text-left hover:bg-cyan-100/60 transition"
                 >
-                  <div className="text-xs font-extrabold text-cyan-300">
+                  <div className="text-xs font-extrabold text-cyan-800">
                     🛡️ 보안 스냅샷 금고에서 즉시 복구
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
+                  <p className="text-[11px] text-slate-600 mt-0.5 whitespace-normal">
                     실수나 외부 영향으로 일정이 지워졌을 때, 기기 내부 보안 금고에 자동 보관된 직전 일정을 즉시 되살립니다.
                   </p>
                 </button>
 
                 <button
                   onClick={handleRecoverPreviousStorageData}
-                  className="w-full p-3.5 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-left"
+                  className="w-full p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-left hover:bg-emerald-100/60 transition"
                 >
-                  <div className="text-xs font-extrabold text-emerald-400">
+                  <div className="text-xs font-extrabold text-emerald-800">
                     🔄 이 기기의 이전 버전 코스 찾아 합치기
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 whitespace-normal">
+                  <p className="text-[11px] text-slate-600 mt-0.5 whitespace-normal">
                     현재 브라우저에 남아 있던 예전 코스들을 찾아 클라우드에 합칩니다.
                   </p>
                 </button>
@@ -4474,11 +4811,11 @@
                 <div className="flex gap-2">
                   <button
                     onClick={handleExportJSON}
-                    className="flex-1 p-3 rounded-2xl bg-slate-800 border border-slate-700 text-xs font-extrabold text-white"
+                    className="btn-ghost flex-1 text-xs text-center"
                   >
                     💾 파일로 백업
                   </button>
-                  <label className="flex-1 p-3 rounded-2xl bg-slate-800 border border-slate-700 text-xs font-extrabold text-white text-center cursor-pointer">
+                  <label className="btn-ghost flex-1 text-xs text-center cursor-pointer">
                     📂 파일 불러오기
                     <input type="file" accept=".json" onChange={handleImportJSON} className="hidden" />
                   </label>
@@ -4491,7 +4828,7 @@
                     setShowResetModal(false);
                     showToast("🔄 방문 완료(OK) 체크만 초기화되었습니다.");
                   }}
-                  className="w-full p-3 rounded-2xl bg-slate-800 border border-slate-700 text-left text-xs font-extrabold text-slate-300"
+                  className="btn-ghost w-full text-left text-xs text-slate-700"
                 >
                   ☑️ 방문 완료(OK) 체크 상태만 초기화
                 </button>
@@ -4524,7 +4861,7 @@
                       }
                     );
                   }}
-                  className="w-full p-3 rounded-2xl bg-rose-600/20 border border-rose-500/40 text-left text-xs font-extrabold text-rose-400"
+                  className="btn-danger w-full text-left text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 border border-rose-200"
                 >
                   🗑️ 모든 핀 비우기
                 </button>
