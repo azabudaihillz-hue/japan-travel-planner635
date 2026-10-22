@@ -583,8 +583,24 @@
             /[^a-zA-Z0-9_-]/g,
             ""
           ),
-          dayId: cleanSafeText(p.dayId, 30, "day-1") || "day-1",
-          dayLabel: cleanSafeText(p.dayLabel, 30, "Day 1") || "Day 1",
+          dayId: cleanSafeText(String(p.dayId || "day-1"), 32, "day-1").replace(
+            /[^a-zA-Z0-9_-]/g,
+            ""
+          ),
+          dayLabel: cleanSafeText(p.dayLabel, 40, "Day 1"),
+          localTodos: Array.isArray(p.localTodos)
+            ? p.localTodos
+                .slice(0, 50)
+                .filter((t) => t && typeof t === "object")
+                .map((t, i) => ({
+                  id: cleanSafeText(String(t.id || `lt-${i}`), 64, `lt-${i}`).replace(
+                    /[^a-zA-Z0-9_-]/g,
+                    ""
+                  ),
+                  text: cleanSafeText(t.text, 120, "할 일"),
+                  done: Boolean(t.done)
+                }))
+            : [],
           name: cleanSafeText(p.name, 120, "여행 장소"),
           category: cleanSafeText(p.category, 40, "📸 명소·포토존"),
           address: cleanSafeText(p.address, 300, ""),
@@ -1066,43 +1082,142 @@
       });
       const [expandedPinId, setExpandedPinId] = useState(null);
 
-      // 🏷️ Day 필터 & 상태 필터 (전체 / 남은 일정 / 완료)
-      const [courseFilter, setCourseFilter] = useState("all"); // "all" | "remaining" | "done"
-      const [selectedDayId, setSelectedDayId] = useState("all"); // "all" | "day-1" | "day-2" ...
+      // A. state 추가 (드래그 인덱스, 코스 필터, 선택된 Day)
       const [dragOverIndex, setDragOverIndex] = useState(null);
+      const [courseFilter, setCourseFilter] = useState("all"); // all | remaining | done
+      const [selectedDayId, setSelectedDayId] = useState("all"); // all | day-1 | day-2 ...
 
-      // Day 목록 자동 집계 (Day 1은 항시 기본 포함)
+      // C. dayOptions + visiblePins (useMemo)
       const dayOptions = useMemo(() => {
-        const daysMap = new Map();
-        daysMap.set("day-1", { id: "day-1", label: "Day 1" });
+        const map = new Map();
         pins.forEach((p) => {
-          if (p.dayId && p.dayLabel) {
-            daysMap.set(p.dayId, { id: p.dayId, label: p.dayLabel });
-          }
+          const id = p.dayId || "day-1";
+          const label = p.dayLabel || "Day 1";
+          if (!map.has(id)) map.set(id, label);
         });
-        return Array.from(daysMap.values());
-      }, [pins]);
+        if (map.size === 0) map.set("day-1", "Day 1");
+        if (typeof window !== "undefined" && window.__pendingDayId) {
+          map.set(
+            window.__pendingDayId,
+            window.__pendingDayLabel || window.__pendingDayId
+          );
+        }
+        return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+      }, [pins, selectedDayId]);
 
-      const handleAddDay = () => {
-        const nextNum = dayOptions.length + 1;
-        const newDayId = `day-${nextNum}`;
-        const newDayLabel = `Day ${nextNum}`;
-        setSelectedDayId(newDayId);
-        showToast(`✨ ${newDayLabel}이 추가되었습니다. 장소를 추가하면 ${newDayLabel}에 등록됩니다.`);
-      };
-
-      // 🔍 필터링된 코스 핀 목록
-      const filteredPins = useMemo(() => {
-        return pins.filter((pin) => {
-          if (selectedDayId !== "all") {
-            const pDay = pin.dayId || "day-1";
-            if (pDay !== selectedDayId) return false;
+      const visiblePins = useMemo(() => {
+        return pins.filter((p) => {
+          if (courseFilter === "remaining" && p.completed) return false;
+          if (courseFilter === "done" && !p.completed) return false;
+          if (selectedDayId !== "all" && (p.dayId || "day-1") !== selectedDayId) {
+            return false;
           }
-          if (courseFilter === "remaining" && pin.completed) return false;
-          if (courseFilter === "done" && !pin.completed) return false;
           return true;
         });
-      }, [pins, selectedDayId, courseFilter]);
+      }, [pins, courseFilter, selectedDayId]);
+
+      // D. Day / 드래그 핸들러
+      const handleAddDay = () => {
+        const nums = dayOptions
+          .map((d) => {
+            const m = String(d.id).match(/day-(\d+)/);
+            return m ? Number(m[1]) : 0;
+          })
+          .filter((n) => n > 0);
+        const nextNum = (nums.length ? Math.max(...nums) : 0) + 1;
+        const newId = "day-" + nextNum;
+        const newLabel = "Day " + nextNum;
+        if (typeof window !== "undefined") {
+          window.__pendingDayId = newId;
+          window.__pendingDayLabel = newLabel;
+        }
+        setSelectedDayId(newId);
+        showToast(`📅 ${newLabel} 선택됨 — 다음 추가 장소가 이 Day에 들어갑니다.`);
+      };
+
+      const handleChangePinDay = (pinId, dayId, dayLabel) => {
+        setPins((prev) =>
+          prev.map((p) =>
+            p.id === pinId ? { ...p, dayId, dayLabel: dayLabel || dayId } : p
+          )
+        );
+        showToast("📅 일차가 변경되었습니다.");
+      };
+
+      const handleDragStart = (index) => {
+        const pin = visiblePins[index];
+        if (!pin) return;
+        dragItemIndexRef.current = pins.findIndex((p) => p.id === pin.id);
+      };
+
+      const handleDragEnter = (index) => {
+        const pin = visiblePins[index];
+        if (!pin) return;
+        dragOverIndexRef.current = pins.findIndex((p) => p.id === pin.id);
+        setDragOverIndex(index);
+      };
+
+      const handleDragEnd = () => {
+        const from = dragItemIndexRef.current;
+        const to = dragOverIndexRef.current;
+        if (from !== null && to !== null && from !== to && from >= 0 && to >= 0) {
+          const updated = [...pins];
+          const [moved] = updated.splice(from, 1);
+          updated.splice(to, 0, moved);
+          setPins(updated);
+          showToast("🔄 코스 순서가 변경되었습니다!");
+        }
+        dragItemIndexRef.current = null;
+        dragOverIndexRef.current = null;
+        setDragOverIndex(null);
+      };
+
+      // G. localTodos 핸들러 (장소별 할 일)
+      const handleAddLocalTodo = (pinId, text) => {
+        const t = (text || "").trim();
+        if (!t) return;
+        setPins((prev) =>
+          prev.map((p) =>
+            p.id === pinId
+              ? {
+                  ...p,
+                  localTodos: [
+                    ...(p.localTodos || []),
+                    { id: "lt-" + Date.now(), text: t, done: false }
+                  ]
+                }
+              : p
+          )
+        );
+      };
+
+      const handleToggleLocalTodo = (pinId, todoId) => {
+        setPins((prev) =>
+          prev.map((p) =>
+            p.id === pinId
+              ? {
+                  ...p,
+                  localTodos: (p.localTodos || []).map((todo) =>
+                    todo.id === todoId ? { ...todo, done: !todo.done } : todo
+                  )
+                }
+              : p
+          )
+        );
+      };
+
+      const handleRemoveLocalTodo = (pinId, todoId) => {
+        setPins((prev) =>
+          prev.map((p) =>
+            p.id === pinId
+              ? {
+                  ...p,
+                  localTodos: (p.localTodos || []).filter((todo) => todo.id !== todoId)
+                }
+              : p
+          )
+        );
+      };
 
       const [showAddModal, setShowAddModal] = useState(false);
       const [searchKeyword, setSearchKeyword] = useState("");
@@ -2003,20 +2118,52 @@
         return null;
       }, [pins, selectedPinIndex]);
 
-      const budgetStats = useMemo(() => {
-        let totalPlannedKRW = 0;
-        let totalBoughtKRW = 0;
-        let totalGoogleAvgYenPerPerson = 0;
+      // H. 예산 요약 useMemo (총액·1인당·Day별 합계)
+      const budgetSummary = useMemo(() => {
+        let totalKRW = 0;
+        let totalJPY = 0;
+        let boughtKRW = 0;
+        const byDay = {}; // { "day-1": { label, krw, jpy, count } }
 
+        pins.forEach((pin) => {
+          const dayId = pin.dayId || "day-1";
+          const dayLabel = pin.dayLabel || "Day 1";
+          if (!byDay[dayId]) {
+            byDay[dayId] = { label: dayLabel, krw: 0, jpy: 0, count: 0 };
+          }
+
+          (pin.items || []).forEach((item) => {
+            const krw = Number(item.price) || 0;
+            const jpy = Number(item.yen) || (exchangeRate > 0 ? Math.round(krw / exchangeRate) : 0);
+            totalKRW += krw;
+            totalJPY += jpy;
+            byDay[dayId].krw += krw;
+            byDay[dayId].jpy += jpy;
+            byDay[dayId].count += 1;
+            if (item.bought) boughtKRW += krw;
+          });
+        });
+
+        const people = Math.max(1, Number(peopleCount) || 1);
+        const spentPercent =
+          totalKRW > 0 ? Math.min(100, Math.round((boughtKRW / totalKRW) * 100)) : 0;
+
+        return {
+          totalKRW,
+          totalJPY,
+          boughtKRW,
+          remainingKRW: Math.max(0, totalKRW - boughtKRW),
+          perPersonKRW: Math.round(totalKRW / people),
+          spentPercent,
+          byDay: Object.entries(byDay).map(([id, v]) => ({ id, ...v }))
+        };
+      }, [pins, peopleCount, exchangeRate]);
+
+      const budgetStats = useMemo(() => {
+        let totalGoogleAvgYenPerPerson = 0;
         pins.forEach((pin) => {
           const avgObj = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
           totalGoogleAvgYenPerPerson += Number(avgObj.avgYen || 0);
-
-          pin.items.forEach((item) => {
-            const krw = Number(item.price || 0);
-            totalPlannedKRW += krw;
-            if (item.bought) totalBoughtKRW += krw;
-          });
         });
 
         let totalTransitMinutes = 0;
@@ -2030,15 +2177,14 @@
             }
           }
         }
-        const totalPlannedJPY = exchangeRate > 0 ? Math.round(totalPlannedKRW / exchangeRate) : 0;
 
         return {
-          totalPlannedKRW,
-          totalPlannedJPY,
-          totalBoughtKRW,
-          remainingKRW: totalPlannedKRW - totalBoughtKRW,
-          perPersonKRW: peopleCount > 0 ? Math.ceil(totalPlannedKRW / peopleCount) : totalPlannedKRW,
-          perPersonJPY: peopleCount > 0 ? Math.ceil(totalPlannedJPY / peopleCount) : totalPlannedJPY,
+          totalPlannedKRW: budgetSummary.totalKRW,
+          totalPlannedJPY: budgetSummary.totalJPY,
+          totalBoughtKRW: budgetSummary.boughtKRW,
+          remainingKRW: budgetSummary.remainingKRW,
+          perPersonKRW: budgetSummary.perPersonKRW,
+          perPersonJPY: peopleCount > 0 ? Math.ceil(budgetSummary.totalJPY / peopleCount) : budgetSummary.totalJPY,
           totalTransitFormatted: totalTransitMinutes > 0 ? formatMinutesToKorean(totalTransitMinutes) : "0분",
           totalWalkFormatted: totalWalkMinutes > 0 ? formatMinutesToKorean(totalWalkMinutes) : "0분",
           totalTransitMinutes,
@@ -2046,7 +2192,7 @@
           totalGoogleAvgYenPerPerson,
           totalGoogleAvgKRWPerPerson: Math.round(totalGoogleAvgYenPerPerson * exchangeRate)
         };
-      }, [pins, peopleCount, exchangeRate]);
+      }, [pins, peopleCount, exchangeRate, budgetSummary]);
 
       // 🌍 구글 한국어 지도 타일 초기화 (시작 페이지 인증 완료 시 즉시 마운트)
       useEffect(() => {
@@ -2722,17 +2868,19 @@
         const finalCategory = category || customCategory;
         const computedSpend = spendInfo || estimateGoogleAvgSpend(name, finalCategory);
 
-        const assignedDayId = selectedDayId === "all" ? "day-1" : selectedDayId;
-        const assignedDayLabel =
-          selectedDayId === "all"
-            ? "Day 1"
-            : dayOptions.find((d) => d.id === selectedDayId)?.label ||
-              `Day ${selectedDayId.replace("day-", "")}`;
+        // E. 새 장소 추가 시 Day 붙이기
+        const pendingDayId =
+          (typeof window !== "undefined" && window.__pendingDayId) ||
+          (selectedDayId !== "all" ? selectedDayId : null) ||
+          "day-1";
+
+        const pendingDayLabel =
+          (typeof window !== "undefined" && window.__pendingDayLabel) ||
+          dayOptions.find((d) => d.id === pendingDayId)?.label ||
+          "Day 1";
 
         const newPin = {
           id: "pin-" + Date.now(),
-          dayId: assignedDayId,
-          dayLabel: assignedDayLabel,
           name,
           category: finalCategory,
           address: address || "",
@@ -2742,8 +2890,16 @@
           memo: "",
           customTransitMinutes: null,
           spendInfo: computedSpend,
-          items: []
+          items: [],
+          dayId: pendingDayId,
+          dayLabel: pendingDayLabel,
+          localTodos: []
         };
+
+        if (typeof window !== "undefined") {
+          window.__pendingDayId = null;
+          window.__pendingDayLabel = null;
+        }
 
         setPins((prev) => {
           const nextPins = [...prev, newPin];
@@ -2777,27 +2933,7 @@
         setPins(copied);
       };
 
-      const handleDragStart = (index) => {
-        dragItemIndexRef.current = index;
-      };
-      const handleDragEnter = (index) => {
-        dragOverIndexRef.current = index;
-        setDragOverIndex(index);
-      };
-      const handleDragEnd = () => {
-        const from = dragItemIndexRef.current;
-        const to = dragOverIndexRef.current;
-        if (from !== null && to !== null && from !== to) {
-          const updated = [...pins];
-          const [moved] = updated.splice(from, 1);
-          updated.splice(to, 0, moved);
-          setPins(updated);
-          showToast("🔄 코스 순서가 변경되었습니다!");
-        }
-        dragItemIndexRef.current = null;
-        dragOverIndexRef.current = null;
-        setDragOverIndex(null);
-      };
+// (Drag handlers moved to top of App component)
 
       const handleSavePinEdit = (pinId) => {
         if (!editNameText.trim()) return;
@@ -3606,7 +3742,7 @@
                         </button>
                       </div>
                     </div>
-                  ) : filteredPins.length === 0 ? (
+                  ) : visiblePins.length === 0 ? (
                     <div className="glass-card text-center py-10 px-4 space-y-2">
                       <div className="text-2xl">🔍</div>
                       <div className="text-sm font-bold text-slate-700">
@@ -3623,21 +3759,21 @@
                       </button>
                     </div>
                   ) : (
-                    filteredPins.map((pin) => {
-                      const originalIndex = pins.findIndex((p) => p.id === pin.id);
+                    visiblePins.map((pin, index) => {
+                      const realIndex = pins.findIndex((p) => p.id === pin.id);
                       const isSelected = pin.id === selectedPin?.id;
                       const isExpanded = expandedPinId === pin.id;
                       const pinTotalKRW = (pin.items || []).reduce((s, i) => s + Number(i.price || 0), 0);
                       const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
-                      const nextPin = pins[originalIndex + 1] || null;
+                      const nextPin = realIndex >= 0 && realIndex < pins.length - 1 ? pins[realIndex + 1] : null;
                       const transitToNext = nextPin ? estimateTransitInfo(pin, nextPin) : null;
 
                       return (
                         <React.Fragment key={pin.id}>
                           <div
                             draggable
-                            onDragStart={() => handleDragStart(originalIndex)}
-                            onDragEnter={() => handleDragEnter(originalIndex)}
+                            onDragStart={() => handleDragStart(index)}
+                            onDragEnter={() => handleDragEnter(index)}
                             onDragEnd={handleDragEnd}
                             onDragOver={(e) => e.preventDefault()}
                             onClick={() => {
@@ -3645,24 +3781,39 @@
                               setExpandedPinId((prev) => (prev === pin.id ? null : pin.id));
                               if (mapInstanceRef.current) {
                                 mapInstanceRef.current.flyTo([pin.lat, pin.lng], 16, { duration: 0.7 });
-                                if (markersRef.current[originalIndex]) {
-                                  markersRef.current[originalIndex].openPopup();
+                                if (markersRef.current[realIndex]) {
+                                  markersRef.current[realIndex].openPopup();
                                 }
                               }
                             }}
                             className={`
                               glass-card relative p-3.5 transition-all duration-200 cursor-grab active:cursor-grabbing
                               ${isSelected ? "ring-2 ring-indigo-400/50" : ""}
-                              ${dragOverIndex === originalIndex ? "pin-drag-over" : ""}
+                              ${dragOverIndex === index ? "pin-drag-over" : ""}
                               ${pin.completed ? "opacity-75" : ""}
                             `}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                                  <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-                                    {pin.dayLabel || "Day 1"}
-                                  </span>
+                                  {/* Day select 연결 (Day 변경 및 라벨 표시) */}
+                                  <select
+                                    value={pin.dayId || "day-1"}
+                                    onChange={(e) => {
+                                      const id = e.target.value;
+                                      const label = dayOptions.find((d) => d.id === id)?.label || id;
+                                      handleChangePinDay(pin.id, id, label);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-[10px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-1.5 py-0.5 cursor-pointer focus:outline-none"
+                                    title="일차(Day) 변경"
+                                  >
+                                    {dayOptions.map((d) => (
+                                      <option key={d.id} value={d.id}>
+                                        {d.label}
+                                      </option>
+                                    ))}
+                                  </select>
                                   <span className="text-[11px] font-bold text-slate-500">
                                     {pin.category}
                                   </span>
@@ -3681,16 +3832,16 @@
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <button
-                                  onClick={() => handleMovePinOrder(originalIndex, -1)}
-                                  disabled={originalIndex === 0}
+                                  onClick={() => handleMovePinOrder(realIndex, -1)}
+                                  disabled={realIndex === 0}
                                   title="위로 이동"
                                   className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white/80 hover:bg-white border border-slate-200 text-slate-600 disabled:opacity-25 text-[11px] flex items-center justify-center transition shadow-sm"
                                 >
                                   ▲
                                 </button>
                                 <button
-                                  onClick={() => handleMovePinOrder(originalIndex, 1)}
-                                  disabled={originalIndex === pins.length - 1}
+                                  onClick={() => handleMovePinOrder(realIndex, 1)}
+                                  disabled={realIndex === pins.length - 1}
                                   title="아래로 이동"
                                   className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white/80 hover:bg-white border border-slate-200 text-slate-600 disabled:opacity-25 text-[11px] flex items-center justify-center transition shadow-sm"
                                 >
@@ -3916,6 +4067,86 @@
                                     placeholder="영업시간, 예약번호, 체크인 시간, 추천 메뉴 등을 자유롭게 적어두세요"
                                     className="w-full bg-white border border-slate-200 focus:border-indigo-500 focus:outline-none rounded-xl p-2.5 text-xs sm:text-sm text-slate-900 resize-none shadow-inner"
                                   />
+                                </div>
+
+                                {/* ✅ 장소별 할 일 (localTodos) */}
+                                <div className="space-y-2 p-3 rounded-2xl bg-indigo-50/40 border border-indigo-100" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-between">
+                                    <label className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                                      <span>✅</span>
+                                      <span>장소별 할 일 · 체크리스트 ({(pin.localTodos || []).length}건)</span>
+                                    </label>
+                                    <span className="text-[11px] font-bold text-indigo-600">
+                                      {(pin.localTodos || []).filter(t => t.done).length}/{(pin.localTodos || []).length} 완료
+                                    </span>
+                                  </div>
+
+                                  {(pin.localTodos || []).length > 0 && (
+                                    <div className="space-y-1.5">
+                                      {(pin.localTodos || []).map((todo) => (
+                                        <label
+                                          key={todo.id}
+                                          className={`flex items-center justify-between p-2 rounded-xl border transition cursor-pointer ${
+                                            todo.done ? "bg-emerald-50/60 border-emerald-200" : "bg-white border-slate-200"
+                                          }`}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                                            <input
+                                              type="checkbox"
+                                              checked={!!todo.done}
+                                              onChange={() => handleToggleLocalTodo(pin.id, todo.id)}
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="w-4 h-4 rounded accent-emerald-500 shrink-0"
+                                            />
+                                            <span className={`text-xs font-bold break-keep ${todo.done ? "line-through text-slate-400" : "text-slate-800"}`}>
+                                              {todo.text}
+                                            </span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            className="w-5 h-5 rounded hover:bg-rose-100 text-rose-500 text-xs font-bold flex items-center justify-center shrink-0 ml-1.5 transition"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleRemoveLocalTodo(pin.id, todo.id);
+                                            }}
+                                          >
+                                            ✕
+                                          </button>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  <form
+                                    onSubmit={(e) => {
+                                      e.preventDefault();
+                                      const input = e.currentTarget.elements.namedItem("localTodoText");
+                                      if (input && input.value.trim()) {
+                                        handleAddLocalTodo(pin.id, input.value.trim());
+                                        input.value = "";
+                                      }
+                                    }}
+                                    className="flex gap-1.5 pt-0.5"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <input
+                                      name="localTodoText"
+                                      type="text"
+                                      spellCheck={false}
+                                      autoCorrect="off"
+                                      autoCapitalize="off"
+                                      autoComplete="off"
+                                      placeholder="이 장소에서 할 일 추가 (예: 시그니처 디저트 맛보기)"
+                                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 shadow-inner"
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="btn-primary py-1.5 px-3 text-xs font-extrabold shrink-0"
+                                    >
+                                      ＋ 추가
+                                    </button>
+                                  </form>
                                 </div>
 
                                 {/* 🛍️ 내 지출 예산 항목 추가 & 체크리스트 */}
@@ -4282,10 +4513,15 @@
               💰 메인 영역 3: 예산 · 정산 · 장소별 평균값 비교 탭 (Requirement 5)
              ================================================================= */}
           {currentView === "budget" && (() => {
-            const budgetProgress =
-              budgetStats.totalPlannedKRW > 0
-                ? Math.min(100, Math.round((budgetStats.totalBoughtKRW / budgetStats.totalPlannedKRW) * 100))
-                : 0;
+            const {
+              totalKRW,
+              totalJPY,
+              perPersonKRW,
+              spentPercent,
+              boughtKRW,
+              remainingKRW,
+              byDay
+            } = budgetSummary;
 
             return (
               <main className="flex-1 max-w-[1160px] w-full mx-auto p-2.5 sm:p-4 space-y-3.5">
@@ -4313,20 +4549,20 @@
                   <div className="budget-stat bg-indigo-50/70 border border-indigo-100">
                     <div className="text-[11px] font-bold text-indigo-700">총 예산</div>
                     <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
-                      {formatKRW(budgetStats.totalPlannedKRW)}
+                      {formatKRW(totalKRW)}
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
-                      약 {formatJPY(budgetStats.totalPlannedJPY)}
+                      약 {formatJPY(totalJPY)}
                     </div>
                   </div>
 
                   <div className="budget-stat bg-emerald-50/70 border border-emerald-100">
                     <div className="text-[11px] font-bold text-emerald-700">지출 완료</div>
                     <div className="text-lg sm:text-2xl font-black text-emerald-700 mt-1">
-                      {formatKRW(budgetStats.totalBoughtKRW)}
+                      {formatKRW(boughtKRW)}
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
-                      남은 예산: {formatKRW(budgetStats.remainingKRW)}
+                      남은 예산: {formatKRW(remainingKRW)}
                     </div>
                   </div>
 
@@ -4360,10 +4596,10 @@
                       </div>
                     </div>
                     <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
-                      {formatKRW(budgetStats.perPersonKRW)}
+                      {formatKRW(perPersonKRW)}
                     </div>
                     <div className="text-[11px] text-purple-700 mt-0.5">
-                      약 {formatJPY(budgetStats.perPersonJPY)}
+                      약 {formatJPY(Math.round(totalJPY / Math.max(1, peopleCount)))}
                     </div>
                   </div>
                 </div>
@@ -4372,14 +4608,51 @@
                 <div className="glass-card p-4 space-y-2">
                   <div className="flex justify-between items-center text-xs font-bold">
                     <span className="text-slate-600">
-                      예산 소진율 ({formatKRW(budgetStats.totalBoughtKRW)} / {formatKRW(budgetStats.totalPlannedKRW)})
+                      예산 소진율 ({formatKRW(boughtKRW)} / {formatKRW(totalKRW)})
                     </span>
-                    <span className="text-indigo-600 font-black">{budgetProgress}%</span>
+                    <span className="text-indigo-600 font-black">{spentPercent}%</span>
                   </div>
                   <div className="budget-progress-track">
-                    <div className="budget-progress-fill" style={{ width: `${budgetProgress}%` }} />
+                    <div className="budget-progress-fill" style={{ width: `${spentPercent}%` }} />
                   </div>
                 </div>
+
+                {/* 📅 Day별 예산 요약 */}
+                {byDay && byDay.length > 0 && (
+                  <div className="glass-card p-4 space-y-2.5">
+                    <div className="flex items-center justify-between pb-1 border-b border-slate-200/80">
+                      <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-1.5">
+                        <span>📅</span>
+                        <span>일차(Day)별 예산 합계</span>
+                      </h3>
+                      <span className="text-[11px] font-bold text-slate-500">
+                        총 {byDay.length}개 일차
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {byDay.map((d) => (
+                        <div key={d.id} className="p-3 rounded-2xl bg-white/80 border border-slate-200 flex items-center justify-between shadow-sm">
+                          <div>
+                            <span className="text-xs font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                              {d.label}
+                            </span>
+                            <div className="text-[11px] text-slate-500 mt-1">
+                              등록 항목: {d.count}건
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-black text-slate-900">
+                              {formatKRW(d.krw)}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              약 {formatJPY(d.jpy)}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* 장소별 예산 & 구글맵 평균값 리스트 */}
                 <div className="glass-card p-4 sm:p-6 space-y-3">
