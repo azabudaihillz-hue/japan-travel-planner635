@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#ec4899" />
+    </linearGradient>
+    <linearGradient id="glass" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.9)" />
+      <stop offset="100%" stop-color="rgba(255,255,255,0.7)" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)" />
+  <circle cx="256" cy="256" r="180" fill="url(#glass)" />
+  <!-- Airplane icon -->
+  <path d="M380 230 L280 210 L220 120 C215 112 205 110 196 115 C190 119 187 127 190 135 L220 220 L160 230 L135 195 C131 190 125 188 119 190 C114 192 110 197 110 203 L115 256 L110 309 C110 315 114 320 119 322 C125 324 131 322 135 317 L160 282 L220 292 L190 377 C187 385 190 393 196 397 C205 402 215 400 220 392 L280 302 L380 282 C398 278 410 268 410 256 C410 244 398 234 380 230 Z" fill="#4f46e5" />
+</svg>

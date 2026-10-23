@@ -17,6 +17,15 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- PWA & Mobile Web App Settings -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="여행 플래너" />
+
   <!-- Pretendard Font -->
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 
@@ -700,12 +709,12 @@
 
     function loadSavedTitleWithMigration() {
       const master = localStorage.getItem(STORAGE_KEY_TITLE);
-      if (master) return cleanSafeText(master, 80, "우리의 일본 여행 ✈️");
+      if (master) return cleanSafeText(master, 80, "우리의 여행 플래너 ✈️");
       for (let i = 13; i >= 4; i--) {
         const old = localStorage.getItem(`travel_planner_title_v${i}`);
-        if (old && old !== "여행 계획") return cleanSafeText(old, 80, "우리의 일본 여행 ✈️");
+        if (old && old !== "여행 계획") return cleanSafeText(old, 80, "우리의 여행 플래너 ✈️");
       }
-      return "우리의 일본 여행 ✈️";
+      return "우리의 여행 플래너 ✈️";
     }
 
     // 📊 구글 맵 빅데이터 기반 장소/카테고리별 1인당 평균 사용 금액 추론 엔진
@@ -1039,7 +1048,7 @@
           : [
               { id: "chk-1", text: "여권 및 비짓재팬웹 QR 캡처", done: false },
               { id: "chk-2", text: "돼지코(110V 어댑터) & 보조배터리", done: false },
-              { id: "chk-3", text: "트래블로그/트래블월렛 카드 & 엔화 현금", done: false }
+              { id: "chk-3", text: "트래블카드 / 여행용 결제 수단 & 현금 준비", done: false }
             ];
       });
       const [newCheckText, setNewCheckText] = useState("");
@@ -1170,6 +1179,61 @@
         dragItemIndexRef.current = null;
         dragOverIndexRef.current = null;
         setDragOverIndex(null);
+      };
+
+      // 📋 현재 필터/Day 일정을 텍스트로 복사 (P2-10)
+      const handleCopyItineraryText = () => {
+        if (visiblePins.length === 0) {
+          showToast("⚠️ 복사할 일정이 없습니다.");
+          return;
+        }
+        const currentDayLabel =
+          selectedDayId === "all"
+            ? "전체 일정"
+            : dayOptions.find((d) => d.id === selectedDayId)?.label || selectedDayId;
+        const filterLabel =
+          courseFilter === "remaining"
+            ? " (남은 일정)"
+            : courseFilter === "done"
+            ? " (완료 항목)"
+            : "";
+
+        const lines = [
+          `✈️ ${tripTitle || "여행 플래너"} - ${currentDayLabel}${filterLabel} (${visiblePins.length}곳)`,
+          `────────────────────────`
+        ];
+
+        visiblePins.forEach((p, idx) => {
+          lines.push(
+            `${idx + 1}. [${p.dayLabel || "Day 1"}] ${p.name} (${p.category || "장소"})${
+              p.completed ? " [방문 완료✓]" : ""
+            }`
+          );
+          if (p.address) lines.push(`   📍 주소: ${p.address}`);
+          if (p.memo) lines.push(`   📝 메모: ${p.memo}`);
+          if (p.localTodos && p.localTodos.length > 0) {
+            lines.push(
+              `   ✅ 할일: ` +
+                p.localTodos
+                  .map((t) => `${t.done ? "[✓]" : "[ ]"} ${t.text}`)
+                  .join(", ")
+            );
+          }
+        });
+
+        const fullText = lines.join("\n");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard
+            .writeText(fullText)
+            .then(() => {
+              showToast(`📋 ${visiblePins.length}개 코스 일정이 텍스트로 복사되었습니다!`);
+            })
+            .catch(() => {
+              showToast("클립보드 복사에 실패했습니다.");
+            });
+        } else {
+          showToast("이 브라우저에서는 클립보드 복사를 지원하지 않습니다.");
+        }
       };
 
       // G. localTodos 핸들러 (장소별 할 일)
@@ -1357,7 +1421,7 @@
           }
           const snapshot = {
             pins: sanitizePinList(stateToBackup.pins),
-            tripTitle: cleanSafeText(stateToBackup.tripTitle, 80, "우리의 일본 여행 ✈️"),
+            tripTitle: cleanSafeText(stateToBackup.tripTitle, 80, "우리의 여행 플래너 ✈️"),
             exchangeRate: Number(stateToBackup.exchangeRate) || 9.05,
             peopleCount: Number(stateToBackup.peopleCount) || 2,
             notes: Array.isArray(stateToBackup.notes) ? stateToBackup.notes : DEFAULT_NOTE_PAD,
@@ -1383,7 +1447,7 @@
             return;
           }
           setPins(safePins);
-          if (snap.tripTitle) setTripTitle(cleanSafeText(snap.tripTitle, 80, "우리의 일본 여행 ✈️"));
+          if (snap.tripTitle) setTripTitle(cleanSafeText(snap.tripTitle, 80, "우리의 여행 플래너 ✈️"));
           if (snap.exchangeRate) setExchangeRate(Number(snap.exchangeRate) || 9.05);
           if (Array.isArray(snap.notes) && snap.notes.length > 0) setNotes(snap.notes);
           if (Array.isArray(snap.checklist) && snap.checklist.length > 0) setChecklist(snap.checklist);
@@ -1460,7 +1524,7 @@
           }
         }
         if (remote.tripTitle) {
-          setTripTitle(cleanSafeText(remote.tripTitle, 80, "우리의 일본 여행 ✈️"));
+          setTripTitle(cleanSafeText(remote.tripTitle, 80, "우리의 여행 플래너 ✈️"));
         }
         if (remote.exchangeRate) {
           setExchangeRate(Math.max(0.5, Math.min(100, Number(remote.exchangeRate) || 9.05)));
@@ -1591,7 +1655,7 @@
 
           const payload = {
             pins: pinsList,
-            tripTitle: cleanSafeText(base.tripTitle, 80, "우리의 일본 여행 ✈️"),
+            tripTitle: cleanSafeText(base.tripTitle, 80, "우리의 여행 플래너 ✈️"),
             exchangeRate: Math.max(0.5, Math.min(100, Number(base.exchangeRate) || 9.05)),
             peopleCount: Math.max(1, Math.min(50, Math.round(Number(base.peopleCount) || 2))),
             notes: Array.isArray(base.notes) ? base.notes.slice(0, 30) : DEFAULT_NOTE_PAD,
@@ -2250,9 +2314,15 @@
           return;
         }
 
-        for (let i = 0; i < pins.length - 1; i++) {
-          const pinA = pins[i];
-          const pinB = pins[i + 1];
+        // Day 필터에 따른 경로 선 렌더링
+        const routePins =
+          selectedDayId === "all"
+            ? pins
+            : pins.filter((p) => (p.dayId || "day-1") === selectedDayId);
+
+        for (let i = 0; i < routePins.length - 1; i++) {
+          const pinA = routePins[i];
+          const pinB = routePins[i + 1];
           const transit = estimateTransitInfo(pinA, pinB);
 
           const segmentLine = L.polyline(
@@ -2270,7 +2340,7 @@
 
           if (transit) {
             const isRelevantSegment =
-              pinA.id === selectedPin?.id || pinB.id === selectedPin?.id || pins.length <= 3;
+              pinA.id === selectedPin?.id || pinB.id === selectedPin?.id || routePins.length <= 3;
             segmentLine.bindTooltip(
               `🚶 도보 ${escapeHtml(transit.walkFormatted)}`,
               {
@@ -2285,14 +2355,22 @@
 
         pins.forEach((pin, idx) => {
           const isSelected = pin.id === selectedPin?.id;
+          const isDayMatch = selectedDayId === "all" || (pin.dayId || "day-1") === selectedDayId;
+
+          // Day 필터 선택 시 해당 Day 외의 핀은 은은하게 반투명 처리
+          const markerOpacity = isDayMatch ? 1 : 0.28;
+          const markerScale = isSelected ? 1.22 : isDayMatch ? 1.05 : 0.85;
+
           const bgColor = pin.completed
             ? "linear-gradient(135deg, #10b981, #059669)"
             : isSelected
             ? "linear-gradient(135deg, #6366f1, #ec4899)"
-            : "linear-gradient(135deg, #2563eb, #1d4ed8)";
+            : isDayMatch
+            ? "linear-gradient(135deg, #4f46e5, #06b6d4)"
+            : "linear-gradient(135deg, #94a3b8, #64748b)";
 
           const iconHtml = `
-            <div class="custom-pin ${isSelected ? "pin-active" : ""}" style="background: ${bgColor}; transform: rotate(-45deg) scale(${isSelected ? 1.2 : 1});">
+            <div class="custom-pin ${isSelected ? "pin-active" : ""}" style="background: ${bgColor}; opacity: ${markerOpacity}; transform: rotate(-45deg) scale(${markerScale});">
               <span>${pin.completed ? "✓" : idx + 1}</span>
             </div>
           `;
@@ -2354,7 +2432,13 @@
 
           markersRef.current.push(marker);
         });
-      }, [isEntryAuthenticated, pins, selectedPin, exchangeRate]);
+
+        // Day 필터 변경 시 해당 Day 마커 영역으로 부드럽게 시야 이동
+        if (selectedDayId !== "all" && routePins.length > 0) {
+          const bounds = L.latLngBounds(routePins.map((p) => [p.lat, p.lng]));
+          map.flyToBounds(bounds.pad(0.35), { duration: 0.8 });
+        }
+      }, [isEntryAuthenticated, pins, selectedPin, exchangeRate, selectedDayId]);
 
       const handleOptimizeShortestRoute = () => {
         if (pins.length < 3) {
@@ -2598,7 +2682,7 @@
               const safePins = sanitizePinList(parsed.pins);
               setPins(safePins);
               if (parsed.tripTitle) {
-                setTripTitle(cleanSafeText(parsed.tripTitle, 80, "우리의 일본 여행 ✈️"));
+                setTripTitle(cleanSafeText(parsed.tripTitle, 80, "우리의 여행 플래너 ✈️"));
               }
               if (parsed.exchangeRate) {
                 setExchangeRate(Math.max(0.5, Math.min(100, Number(parsed.exchangeRate) || 9.05)));
@@ -3714,6 +3798,22 @@
                       ＋ Day
                     </button>
                   </div>
+
+                  {/* 📋 현재 필터/Day 일정 텍스트 원터치 복사 바 */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
+                    <span className="text-[11px] font-bold text-slate-500">
+                      {selectedDayId === "all" ? "전체 일정" : dayOptions.find(d => d.id === selectedDayId)?.label || selectedDayId} ({visiblePins.length}곳)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyItineraryText}
+                      className="px-2.5 py-1 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-extrabold shadow-sm transition flex items-center gap-1 active:scale-95"
+                      title="현재 보이는 일정을 텍스트로 복사합니다"
+                    >
+                      <span>📋</span>
+                      <span>일정 텍스트 복사</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* 코스 목록 */}
@@ -4415,9 +4515,9 @@
                     placeholder={`여기에 자유롭게 적으세요!
 
 예시:
-- 1일차 저녁엔 도톤보리 근처 야키니쿠 먹기
-- 분위기 좋은 루프탑 카페 & 디저트 맛집 찾아두기
-- 돈키호테 쇼핑 리스트: 동전파스, 샤론파스, 휴족시간
+- 1일차 저녁엔 현지 인기 맛집 방문하기
+- 분위기 좋은 루프탑 카페 & 디저트 명소 찾아두기
+- 필수 쇼핑 및 기념품 리스트 정리
 - 숙소 체크인 15:00 / 체크아웃 11:00`}
                     className="flex-1 w-full min-h-[340px] sm:min-h-[440px] bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 text-sm sm:text-base leading-relaxed text-slate-900 focus:outline-none focus:border-indigo-500 resize-y shadow-inner"
                   />
@@ -4528,7 +4628,7 @@
                 {/* 엔화 환산 기준 카드 */}
                 <div className="glass-card p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
                   <div className="text-xs sm:text-sm font-extrabold text-slate-700">
-                    💴 일본 엔화(¥) 자동 환산 기준 (1엔당 원화 설정):
+                    💴 외화(엔화 ¥) 자동 환산 기준 (1엔당 원화 설정):
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-500 font-bold">1엔 =</span>
@@ -4917,7 +5017,7 @@
 
                 <div>
                   <div className="text-xs font-bold text-slate-500 mb-1.5">
-                    🇯🇵 자주 찾는 인기 장소 빠른 추가
+                    ⭐️ 자주 찾는 인기 추천 장소 빠른 추가
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
                     {PRESET_PLACES.map((p, i) => {

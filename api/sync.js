@@ -12,11 +12,9 @@
 
 const crypto = require("crypto");
 
-const SUPABASE_URL =
-  process.env.SUPABASE_URL || "https://abjspnuohxouufkdjefs.supabase.co";
-const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFianNwbnVvaHhvdXVma2RqZWZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMDA5NzcsImV4cCI6MjEwNDg3Njk3N30.hVL3TRPwA1xalf1Tb2LiKJ58Q_DgBc5RWwFs2AfR890";
+// NOTE: Vercel Environment Variables 설정이 필요합니다 (SUPABASE_URL, SUPABASE_ANON_KEY).
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const SYNC_ROW_KEY = "JAPAN_TRAVEL_PLANNER_635";
 
@@ -342,11 +340,31 @@ function sanitizeSyncPayload(raw, securityConfig) {
       };
     }
 
+    // 장소별 할 일(localTodos) 배열 정제 (최대 50개)
+    const rawLocalTodos = Array.isArray(p.localTodos) ? p.localTodos.slice(0, 50) : [];
+    const localTodos = rawLocalTodos
+      .filter((t) => t && typeof t === "object")
+      .map((t, idx) => ({
+        id: cleanString(String(t.id || `lt-${idx}`), 64, `lt-${idx}`).replace(
+          /[^a-zA-Z0-9_-]/g,
+          ""
+        ),
+        text: cleanString(t.text, 120, "할 일"),
+        done: Boolean(t.done),
+      }));
+
     pins.push({
       id: cleanString(String(p.id || `pin-${Date.now()}`), 64, `pin-${Date.now()}`).replace(
         /[^a-zA-Z0-9_-]/g,
         ""
       ),
+      // Day 구분 및 장소별 할 일 보존 (서버가 필드를 버리지 않고 동기화하도록 보장)
+      dayId: cleanString(String(p.dayId || "day-1"), 32, "day-1").replace(
+        /[^a-zA-Z0-9_-]/g,
+        ""
+      ),
+      dayLabel: cleanString(p.dayLabel, 40, "Day 1"),
+      localTodos,
       name: cleanString(p.name, 120, "여행 장소"),
       category: cleanString(p.category, 40, "📸 명소·포토존"),
       address: cleanString(p.address, 300, ""),
@@ -390,7 +408,7 @@ function sanitizeSyncPayload(raw, securityConfig) {
 
   return {
     pins,
-    tripTitle: cleanString(raw.tripTitle, 80, "우리의 일본 여행 ✈️"),
+    tripTitle: cleanString(raw.tripTitle, 80, "우리의 여행 ✈️"),
     exchangeRate: clampNumber(raw.exchangeRate, 0.5, 100, 9.05),
     peopleCount: Math.round(clampNumber(raw.peopleCount, 1, 50, 2)),
     notes,
@@ -506,7 +524,7 @@ async function persistSecurityConfigOnly(existingData, securityConfig) {
       ? { ...existingData, securityConfig }
       : {
           pins: [],
-          tripTitle: "우리의 일본 여행 ✈️",
+          tripTitle: "우리의 여행 ✈️",
           exchangeRate: 9.05,
           peopleCount: 2,
           notes: [],
@@ -544,6 +562,14 @@ module.exports = async function handler(req, res) {
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
+  }
+
+  // 🔒 환경변수 검증 (키 노출 없이 명확한 500 에러 반환)
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(500).json({
+      ok: false,
+      error: "Server configuration missing: SUPABASE_URL / SUPABASE_ANON_KEY",
+    });
   }
 
   const clientIp = getClientIp(req);
