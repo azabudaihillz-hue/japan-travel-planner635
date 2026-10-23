@@ -30,29 +30,49 @@
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 
   <style>
-    /* ===== Light Glass + Readability ===== */
+    /* ===== Apple Liquid Glass Design System ===== */
     :root {
-      --bg-surface: #f5f6f8;
-      --text-primary: #1c1c1e;
-      --text-secondary: #4b5563;
-      --glass-bg: rgba(255, 255, 255, 0.78);
-      --glass-border: rgba(255, 255, 255, 0.7);
-      --accent: #4f46e5;
+      --bg-surface: #EEF1F6;
+      --bg-mesh: radial-gradient(120% 80% at 50% -10%, rgba(219, 234, 254, 0.7) 0%, rgba(238, 242, 246, 0.85) 45%, #F8FAFC 100%);
+      --glass-bg: rgba(255, 255, 255, 0.65);
+      --glass-bg-subtle: rgba(255, 255, 255, 0.45);
+      --glass-bg-elevated: rgba(255, 255, 255, 0.88);
+      --glass-border: rgba(255, 255, 255, 0.65);
+      --glass-border-strong: rgba(255, 255, 255, 0.85);
+      --glass-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.85) inset,
+        0 8px 32px rgba(15, 23, 42, 0.07),
+        0 2px 8px rgba(15, 23, 42, 0.03);
+      --glass-shadow-elevated:
+        0 1px 0 rgba(255, 255, 255, 0.95) inset,
+        0 20px 48px rgba(15, 23, 42, 0.09),
+        0 4px 16px rgba(15, 23, 42, 0.04);
+      --text-primary: #0B0F1A;
+      --text-secondary: #5C6578;
+      --text-tertiary: #8B93A7;
+      --accent: #4F46E5;
+      --accent-glow: rgba(79, 70, 229, 0.25);
+      --success: #10B981;
+      --danger: #EF4444;
+      --warning: #F59E0B;
     }
 
     body {
-      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard Variable", Pretendard, system-ui, sans-serif;
       overflow-x: hidden;
       -webkit-tap-highlight-color: transparent;
       transition: background-color 0.25s ease, color 0.25s ease;
-      letter-spacing: -0.015em;
-      background: #f5f6f8;
-      color: #1c1c1e;
+      letter-spacing: -0.018em;
+      background: var(--bg-surface);
+      background-image: var(--bg-mesh);
+      background-attachment: fixed;
+      color: var(--text-primary);
     }
     .theme-light body,
     body.theme-light {
-      background: var(--bg-surface, #f5f6f8);
-      color: var(--text-primary, #1c1c1e);
+      background: var(--bg-surface);
+      background-image: var(--bg-mesh);
+      color: var(--text-primary);
     }
 
     button {
@@ -67,220 +87,384 @@
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.4); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb { background: rgba(79, 70, 229, 0.35); border-radius: 9999px; }
 
     /* 💎 Apple Liquid Glass Card */
     .glass-card {
-      background: var(--glass-bg, rgba(255, 255, 255, 0.78));
-      backdrop-filter: blur(18px) saturate(160%);
-      -webkit-backdrop-filter: blur(18px) saturate(160%);
-      border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.65));
-      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-      border-radius: 16px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      border-radius: 22px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    /* 제목/본문 대비 */
-    .pin-title {
-      color: #111827;
+    /* 💎 Fixed Top Glass Header */
+    .glass-header {
+      background: rgba(255, 255, 255, 0.72) !important;
+      backdrop-filter: blur(32px) saturate(180%) !important;
+      -webkit-backdrop-filter: blur(32px) saturate(180%) !important;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.75) !important;
+      box-shadow: 0 4px 24px rgba(15, 23, 42, 0.04);
+    }
+
+    /* 💎 iOS Segmented Control Track & Item */
+    .segmented-track {
+      background: rgba(142, 142, 147, 0.12);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 3px;
+      border-radius: 16px;
+      display: flex;
+      gap: 3px;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+    }
+    .segmented-item {
+      flex: 1;
+      padding: 8px 14px;
+      border-radius: 13px;
+      font-size: 13px;
       font-weight: 700;
-      font-size: 15px;
+      color: var(--text-secondary);
+      text-align: center;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+    }
+    .segmented-item-active {
+      background: #ffffff !important;
+      color: var(--text-primary) !important;
+      font-weight: 800;
+      box-shadow: 0 3px 12px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    /* 💎 Day & Filter Chips */
+    .day-chip {
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 14px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .day-chip-active {
+      background: #ffffff !important;
+      color: var(--accent) !important;
+      box-shadow: 0 3px 12px rgba(79, 70, 229, 0.16), 0 1px 0 rgba(255, 255, 255, 0.9) inset !important;
+      border-color: rgba(79, 70, 229, 0.25) !important;
+      font-weight: 800;
+    }
+    .day-chip-idle {
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      color: var(--text-secondary);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+    }
+    .day-chip-idle:hover {
+      background: rgba(255, 255, 255, 0.85);
+      color: var(--text-primary);
+      border-color: rgba(255, 255, 255, 0.85);
+    }
+
+    /* 💎 Course Cards */
+    .pin-card {
+      padding: 16px 18px;
+      border-radius: 20px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      overflow: hidden;
+    }
+    .pin-card:hover {
+      box-shadow: var(--glass-shadow-elevated);
+      border-color: rgba(255, 255, 255, 0.85);
+    }
+    .pin-card.pin-selected {
+      border-color: rgba(79, 70, 229, 0.4);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 8px 30px rgba(79, 70, 229, 0.14);
+    }
+    .pin-card.pin-selected::before {
+      content: "";
+      position: absolute;
+      top: 12px;
+      bottom: 12px;
+      left: 0;
+      width: 3.5px;
+      background: var(--accent);
+      border-radius: 0 4px 4px 0;
+    }
+    .pin-drag-over {
+      border-top: 3px solid var(--accent) !important;
+      background: rgba(79, 70, 229, 0.08) !important;
+    }
+    .pin-title {
+      color: var(--text-primary);
+      font-weight: 700;
+      font-size: 16px;
       letter-spacing: -0.02em;
+      line-height: 1.35;
     }
     .pin-meta {
-      color: #6b7280;
+      color: var(--text-tertiary);
       font-size: 12px;
       font-weight: 500;
+      line-height: 1.4;
     }
 
-    /* 드래그 중 드롭 위치 표시 */
-    .pin-drag-over {
-      border-top: 3px solid #6366f1 !important;
-      background: rgba(99, 102, 241, 0.12) !important;
+    /* 💎 Map Glass Frame & Floating Overlay Controls */
+    .map-glass-frame {
+      border-radius: 22px;
+      overflow: hidden;
+      background: var(--glass-bg);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.8) inset,
+        0 12px 36px rgba(15, 23, 42, 0.07);
+      position: relative;
+    }
+    .glass-pill-btn {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+      border-radius: 9999px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-primary);
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .glass-pill-btn:hover {
+      background: #ffffff;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+      transform: translateY(-1px);
+    }
+    .glass-pill-btn:active {
+      transform: scale(0.97);
     }
 
-    /* 이동시간 뱃지 — 밝은 화면용 */
+    /* 이동시간 뱃지 — Apple Liquid Glass */
     .theme-light .route-time-badge,
     .route-time-badge {
-      background: rgba(255, 255, 255, 0.95) !important;
+      background: rgba(255, 255, 255, 0.92) !important;
+      backdrop-filter: blur(16px) saturate(180%) !important;
+      -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
       color: #1e40af !important;
-      border: 1px solid #bfdbfe !important;
+      border: 1px solid rgba(255, 255, 255, 0.95) !important;
       border-radius: 9999px !important;
-      padding: 3px 10px !important;
-      font-weight: 800 !important;
+      padding: 4px 12px !important;
+      font-weight: 700 !important;
       font-size: 11px !important;
-      box-shadow: 0 4px 12px rgba(30, 64, 175, 0.1) !important;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08) !important;
       white-space: nowrap !important;
     }
 
-    /* 2. Day / 필터 칩 디자인 */
-    .day-chip {
-      border-radius: 9999px;
-      font-size: 11px;
-      font-weight: 800;
-      padding: 6px 12px;
-      white-space: nowrap;
-      flex-shrink: 0;
-      transition: all 0.15s ease;
-      cursor: pointer;
+    /* 💎 Budget Metric Cards & Progress Gauge */
+    .metric-card {
+      padding: 18px 20px;
+      border-radius: 22px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
     }
-    .day-chip-active {
-      background: #4f46e5;
-      color: #fff !important;
-      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
-      border: none;
-    }
-    .day-chip-idle {
-      background: #fff;
-      color: #475569;
-      border: 1px solid #e2e8f0;
-    }
-    .day-chip-idle:hover {
-      border-color: #c7d2fe;
-      color: #4338ca;
-    }
-
-    /* 5. 예산 탭 — 요약 카드 + 리스트 */
-    .budget-summary {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-    .budget-stat {
-      padding: 14px 16px;
-      border-radius: 16px;
-    }
-    .budget-stat-label {
+    .metric-label {
       font-size: 11px;
       font-weight: 700;
-      color: #6b7280;
-      margin-bottom: 4px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
     }
-    .budget-stat-value {
-      font-size: 18px;
-      font-weight: 900;
-      color: #111827;
+    .metric-value {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--text-primary);
       letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-top: 6px;
     }
-    .budget-stat-sub {
-      font-size: 11px;
-      color: #9ca3af;
-      margin-top: 2px;
+    .metric-sub {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      margin-top: 4px;
     }
     .budget-progress-track {
       height: 8px;
       border-radius: 9999px;
-      background: #e5e7eb;
+      background: rgba(142, 142, 147, 0.16);
       overflow: hidden;
     }
     .budget-progress-fill {
       height: 100%;
       border-radius: 9999px;
-      background: linear-gradient(90deg, #6366f1, #818cf8);
-      transition: width 0.3s ease;
+      background: linear-gradient(90deg, #4F46E5, #6366F1);
+      transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    /* 6. 모달 공통 (장소 추가 / 확인 / 리셋) */
+    /* 💎 Modal Overlay & Panels */
     .modal-overlay {
       position: fixed;
       inset: 0;
       z-index: 50;
-      background: rgba(15, 23, 42, 0.35);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      background: rgba(15, 23, 42, 0.28);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 12px;
+      padding: 16px;
     }
     .modal-panel {
       width: 100%;
       max-width: 28rem;
       max-height: 90vh;
       overflow-y: auto;
-      border-radius: 24px;
-      background: rgba(255, 255, 255, 0.92);
-      backdrop-filter: blur(24px) saturate(160%);
-      -webkit-backdrop-filter: blur(24px) saturate(160%);
-      border: 1px solid rgba(255, 255, 255, 0.8);
-      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.12);
-      padding: 20px;
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(36px) saturate(190%);
+      -webkit-backdrop-filter: blur(36px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 1) inset,
+        0 24px 60px rgba(15, 23, 42, 0.12),
+        0 4px 16px rgba(15, 23, 42, 0.04);
+      padding: 24px;
     }
     .modal-title {
-      font-size: 16px;
-      font-weight: 900;
-      color: #111827;
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text-primary);
       letter-spacing: -0.02em;
     }
     .modal-input {
       width: 100%;
-      border-radius: 12px;
-      border: 1px solid #e2e8f0;
-      background: #fff;
-      padding: 10px 14px;
-      font-size: 13px;
+      border-radius: 14px;
+      border: 1px solid rgba(226, 232, 240, 0.9);
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      padding: 11px 16px;
+      font-size: 14px;
       font-weight: 600;
-      color: #0f172a;
+      color: var(--text-primary);
       outline: none;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) inset;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .modal-input:focus {
-      border-color: #818cf8;
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+      background: #ffffff;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
     }
     .modal-input::placeholder {
-      color: #94a3b8;
-      font-weight: 500;
+      color: var(--text-tertiary);
+      font-weight: 400;
     }
+
+    /* 💎 Buttons */
     .btn-primary {
-      border-radius: 12px;
-      background: #4f46e5;
+      border-radius: 14px;
+      background: var(--accent);
       color: #fff !important;
       font-size: 13px;
-      font-weight: 800;
-      padding: 10px 16px;
-      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
-      transition: filter 0.15s ease;
+      font-weight: 700;
+      padding: 10px 18px;
+      min-height: 42px;
+      border: none;
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.28), 0 1px 0 rgba(255, 255, 255, 0.2) inset;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      cursor: pointer;
     }
-    .btn-primary:hover { filter: brightness(1.05); }
+    .btn-primary:hover {
+      filter: brightness(1.05);
+      box-shadow: 0 6px 18px rgba(79, 70, 229, 0.35);
+    }
+    .btn-primary:active {
+      transform: scale(0.98);
+    }
     .btn-ghost {
-      border-radius: 12px;
-      background: #f1f5f9;
-      color: #475569;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.65);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 10px 16px;
+      min-height: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.03);
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.9);
+      color: var(--text-primary);
+      border-color: rgba(255, 255, 255, 0.9);
+    }
+    .btn-ghost:active {
+      transform: scale(0.98);
+    }
+    .btn-danger {
+      border-radius: 14px;
+      background: var(--danger);
+      color: #fff !important;
       font-size: 13px;
       font-weight: 700;
       padding: 10px 16px;
-      border: 1px solid #e2e8f0;
-      transition: background 0.15s ease;
+      min-height: 42px;
+      border: none;
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.28), 0 1px 0 rgba(255, 255, 255, 0.2) inset;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      cursor: pointer;
     }
-    .btn-ghost:hover {
-      background: #e2e8f0;
-      color: #1e293b;
+    .btn-danger:hover {
+      filter: brightness(1.05);
+      box-shadow: 0 6px 18px rgba(239, 68, 68, 0.35);
     }
-    .btn-danger {
-      border-radius: 12px;
-      background: #ef4444;
-      color: #fff !important;
-      font-size: 13px;
-      font-weight: 800;
-      padding: 10px 16px;
-      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
-      transition: filter 0.15s ease;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
+    .btn-danger:active {
+      transform: scale(0.98);
     }
-    .btn-danger:hover { filter: brightness(1.05); }
 
-    /* 7. 하단 탭바 (모바일) */
+    /* 💎 Mobile Bottom Tab Bar */
     .bottom-tab-bar {
       position: fixed;
       bottom: 0;
@@ -288,32 +472,37 @@
       right: 0;
       z-index: 40;
       display: flex;
-      gap: 4px;
-      padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
-      background: rgba(255, 255, 255, 0.85);
-      backdrop-filter: blur(20px) saturate(160%);
-      -webkit-backdrop-filter: blur(20px) saturate(160%);
-      border-top: 1px solid rgba(226, 232, 240, 0.9);
+      gap: 6px;
+      padding: 8px 16px calc(10px + env(safe-area-inset-bottom));
+      background: rgba(255, 255, 255, 0.78);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border-top: 1px solid rgba(255, 255, 255, 0.8);
+      box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.04);
     }
     .tab-item {
       flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 2px;
-      padding: 8px 4px;
-      border-radius: 12px;
-      font-size: 10px;
-      font-weight: 800;
-      color: #94a3b8;
-      transition: all 0.15s ease;
+      gap: 3px;
+      padding: 8px 6px;
+      border-radius: 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      background: transparent;
+      border: none;
+      cursor: pointer;
     }
     .tab-item-active {
-      background: #eef2ff;
-      color: #4f46e5 !important;
+      background: #ffffff !important;
+      color: var(--accent) !important;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
     }
 
-    /* 9. 진입(비밀번호) 화면 */
+    /* 💎 Entry Screen */
     .entry-screen {
       min-height: 100dvh;
       display: flex;
@@ -321,71 +510,76 @@
       justify-content: center;
       padding: 24px 16px;
       background:
-        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(199, 210, 254, 0.55), transparent),
-        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(254, 226, 226, 0.4), transparent),
-        #f5f6f8;
+        radial-gradient(ellipse 90% 60% at 50% -5%, rgba(199, 210, 254, 0.65), transparent 70%),
+        radial-gradient(ellipse 70% 50% at 85% 90%, rgba(224, 231, 255, 0.5), transparent 70%),
+        #EEF1F6;
     }
     .entry-card {
       width: 100%;
-      max-width: 380px;
+      max-width: 400px;
       border-radius: 28px;
-      background: rgba(255, 255, 255, 0.82);
-      backdrop-filter: blur(24px) saturate(160%);
-      -webkit-backdrop-filter: blur(24px) saturate(160%);
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(36px) saturate(180%);
+      -webkit-backdrop-filter: blur(36px) saturate(180%);
       border: 1px solid rgba(255, 255, 255, 0.85);
       box-shadow:
-        0 24px 48px rgba(15, 23, 42, 0.08),
-        0 0 0 1px rgba(226, 232, 240, 0.5);
-      padding: 28px 24px 24px;
+        0 1px 0 rgba(255, 255, 255, 0.95) inset,
+        0 24px 56px rgba(15, 23, 42, 0.08),
+        0 4px 16px rgba(15, 23, 42, 0.03);
+      padding: 36px 28px 28px;
     }
-    .entry-logo {
-      width: 56px;
-      height: 56px;
-      border-radius: 18px;
+    .entry-tile-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 1) inset,
+        0 8px 24px rgba(79, 70, 229, 0.12),
+        0 2px 6px rgba(15, 23, 42, 0.04);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 28px;
-      background: linear-gradient(135deg, #ffe4e6 0%, #fce7f3 50%, #fbcfe8 100%);
-      border: 1.5px solid #f472b6;
-      box-shadow: 0 8px 20px rgba(244, 114, 182, 0.25);
-      margin: 0 auto 16px;
+      margin: 0 auto 20px;
+      color: var(--accent);
     }
     .entry-title {
       text-align: center;
-      font-size: 20px;
-      font-weight: 900;
-      color: #111827;
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--text-primary);
       letter-spacing: -0.03em;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
     .entry-sub {
       text-align: center;
       font-size: 13px;
-      font-weight: 600;
-      color: #6b7280;
-      margin-bottom: 24px;
-      line-height: 1.45;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 28px;
+      line-height: 1.5;
     }
     .entry-error {
-      border-radius: 12px;
+      border-radius: 14px;
       background: #fef2f2;
       border: 1px solid #fecaca;
       color: #b91c1c;
       font-size: 12px;
       font-weight: 700;
-      padding: 10px 12px;
+      padding: 11px 14px;
       margin-bottom: 12px;
     }
     .entry-hint {
       text-align: center;
       font-size: 11px;
-      color: #9ca3af;
+      color: var(--text-tertiary);
       font-weight: 600;
       margin-top: 16px;
     }
 
-    /* 10. 토스트 / 확인 모달 */
+    /* 💎 Toast Pill */
     .toast-pill {
       position: fixed;
       left: 50%;
@@ -393,9 +587,9 @@
       transform: translateX(-50%);
       z-index: 60;
       max-width: min(90vw, 360px);
-      padding: 12px 18px;
+      padding: 12px 20px;
       border-radius: 9999px;
-      background: rgba(17, 24, 39, 0.92);
+      background: rgba(11, 15, 26, 0.92);
       color: #fff !important;
       font-size: 13px;
       font-weight: 700;
@@ -411,8 +605,8 @@
     }
     .confirm-desc {
       font-size: 13px;
-      font-weight: 600;
-      color: #6b7280;
+      font-weight: 500;
+      color: var(--text-secondary);
       line-height: 1.5;
       margin-bottom: 20px;
     }
@@ -422,27 +616,10 @@
       gap: 10px;
     }
 
-    /* ✈️ 로고 배지 및 타임라인 버튼 */
-    .logo-pink-badge {
-      background: linear-gradient(135deg, #ffe4e6 0%, #fce7f3 50%, #fbcfe8 100%) !important;
-      border: 1.5px solid #f472b6 !important;
-      box-shadow: 0 4px 12px rgba(244, 114, 182, 0.22) !important;
-      color: #831843 !important;
-    }
-    .timeline-btn {
-      background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%) !important;
-      border: 1px solid rgba(56, 189, 248, 0.45) !important;
-      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.28) !important;
-      color: #ffffff !important;
-    }
-    .timeline-btn:hover:not(:disabled) {
-      filter: brightness(1.07);
-    }
-
-    /* ☀️ 라이트 모드 (밝은 화면) 글로벌 오버라이드 스타일 — 어두운 회색 박스 완전 제거 */
+    /* ☀️ Light theme override */
     .theme-light {
-      background-color: #f5f6f8 !important;
-      color: #1c1c1e !important;
+      background-color: var(--bg-surface) !important;
+      color: var(--text-primary) !important;
     }
     .theme-light [class*="bg-slate-950"],
     .theme-light [class*="bg-slate-900"],
@@ -457,9 +634,9 @@
     }
     .theme-light .text-white,
     .theme-light .text-slate-100,
-    .theme-light .text-slate-200 { color: #111827 !important; }
+    .theme-light .text-slate-200 { color: var(--text-primary) !important; }
     .theme-light .text-slate-300,
-    .theme-light .text-slate-400 { color: #6b7280 !important; }
+    .theme-light .text-slate-400 { color: var(--text-secondary) !important; }
     .theme-light .text-amber-300 { color: #d97706 !important; }
     .theme-light .text-emerald-400,
     .theme-light .text-emerald-300 { color: #059669 !important; }
@@ -467,7 +644,7 @@
     .theme-light .text-indigo-300 { color: #4f46e5 !important; }
     .theme-light .keep-white { color: #ffffff !important; }
 
-    /* 지도 마커 및 팝업 스타일 */
+    /* Map pins & leaflet */
     .custom-pin {
       display: flex;
       align-items: center;
@@ -513,9 +690,9 @@
     }
     .leaflet-popup-content-wrapper {
       background: rgba(255, 255, 255, 0.95) !important;
-      color: #111827 !important;
-      border-radius: 16px !important;
-      border: 1px solid rgba(226, 232, 240, 0.8) !important;
+      color: var(--text-primary) !important;
+      border-radius: 18px !important;
+      border: 1px solid rgba(226, 232, 240, 0.9) !important;
       box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
     }
     .leaflet-popup-tip { background: rgba(255, 255, 255, 0.95) !important; }
@@ -3358,12 +3535,15 @@
             {renderAdminVaultModal()}
 
             <div className="entry-card space-y-4">
-              <div className="entry-logo">✈️</div>
+              <div className="entry-tile-icon" title="여행 플래너">
+                <svg className="w-7 h-7 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+              </div>
               <h1 className="entry-title">여행 플래너</h1>
               <p className="entry-sub">
-                동행인과 함께 쓰는 스마트 일정·예산 보드
-                <br />
-                비밀번호를 입력해 주세요
+                동행인과 함께 쓰는 스마트 일정 · 실시간 공유 보드
               </p>
 
               {isEntryChecking ? (
@@ -3414,10 +3594,10 @@
                     setShowAdminAuthBox((v) => !v);
                     setAdminFeedbackMsg("");
                   }}
-                  className="text-[11px] font-extrabold text-slate-500 hover:text-indigo-600 transition inline-flex items-center gap-1"
+                  className="text-xs font-semibold text-slate-500 hover:text-indigo-600 px-3 py-1.5 rounded-full hover:bg-white/60 transition inline-flex items-center gap-1.5"
                 >
-                  <span>👑</span>
-                  <span>비밀번호 추가·지정 (관리자 권한)</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  <span>비밀번호 관리 (관리자 권한)</span>
                 </button>
 
                 {showAdminAuthBox && (
@@ -3522,20 +3702,19 @@
               📱 상단 네이티브 앱 헤더 (Apple Liquid Glass)
              ================================================================= */}
           <header
-            className="sticky top-0 z-40 px-3 sm:px-5 py-2.5 backdrop-blur-xl transition-colors duration-200 border-b border-white/70 shadow-sm"
-            style={{
-              background: theme === "light" ? "rgba(255, 255, 255, 0.82)" : "rgba(15, 23, 42, 0.95)"
-            }}
+            className="sticky top-0 z-40 px-3 sm:px-6 py-2.5 glass-header transition-colors duration-200"
           >
             <div className="max-w-[1160px] mx-auto space-y-2">
-              {/* 1단: 연분홍 비행기 로고 + 여행 제목 + 동기화 상태 + 우측 액션(테마·타임라인·설정) */}
+              {/* 1단: 글래스 로고 타일 + 여행 제목 + 동기화 인디케이터 + 우측 액션(테마·타임라인·설정) */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <div
-                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl logo-pink-badge flex items-center justify-center font-black text-base sm:text-lg shrink-0 shadow-sm"
+                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-white/80 backdrop-blur-md border border-white/90 shadow-xs flex items-center justify-center text-indigo-600 shrink-0"
                     title="스마트 여행 플래너"
                   >
-                    ✈️
+                    <svg className="w-5 h-5 sm:w-5.5 sm:h-5.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="3 11 22 2 13 21 11 13 3 11" />
+                    </svg>
                   </div>
                   <input
                     type="text"
@@ -3545,29 +3724,38 @@
                     autoComplete="off"
                     value={tripTitle}
                     onChange={(e) => setTripTitle(e.target.value)}
-                    className="bg-white/90 border border-slate-200 font-extrabold text-sm sm:text-base text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl px-2.5 py-1.5 min-w-0 flex-1 max-w-[165px] sm:max-w-[240px] transition shadow-inner"
+                    className="bg-white/60 hover:bg-white/90 focus:bg-white border border-white/80 focus:border-indigo-400 font-extrabold text-sm sm:text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-100/50 rounded-xl px-3 py-1.5 min-w-0 flex-1 max-w-[170px] sm:max-w-[240px] transition shadow-xs"
                   />
                   {/* ☁️ 실시간 동기화 상태 배지 */}
                   <button
                     onClick={() => fetchCloudData(true)}
                     title="클릭하여 즉시 동기화"
-                    className={`px-2 py-1.5 rounded-xl text-[11px] font-extrabold border flex items-center gap-1 shrink-0 transition ${
-                      syncStatus === "synced"
-                        ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                        : syncStatus === "saving" || syncStatus === "connecting"
-                        ? "bg-amber-50 border-amber-200 text-amber-700 animate-pulse"
-                        : "bg-slate-100 border-slate-200 text-slate-600"
-                    }`}
+                    className="px-2.5 py-1.5 rounded-full text-[11px] font-bold bg-white/70 hover:bg-white/90 border border-white/80 shadow-xs flex items-center gap-1.5 shrink-0 transition"
                   >
                     {syncStatus === "synced" && (
                       <>
-                        <span>☁️</span>
-                        <span className="hidden sm:inline">동기화됨</span>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-xs"></span>
+                        <span className="text-slate-700 hidden sm:inline">동기화됨</span>
                       </>
                     )}
-                    {syncStatus === "saving" && <span>☁️ 저장중</span>}
-                    {syncStatus === "connecting" && <span>🔄 연결중</span>}
-                    {syncStatus === "offline" && <span>🔄 재시도</span>}
+                    {syncStatus === "saving" && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                        <span className="text-amber-700">저장 중</span>
+                      </>
+                    )}
+                    {syncStatus === "connecting" && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
+                        <span className="text-indigo-700">연결 중</span>
+                      </>
+                    )}
+                    {syncStatus === "offline" && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+                        <span className="text-rose-700">재시도</span>
+                      </>
+                    )}
                   </button>
                 </div>
 
@@ -3576,18 +3764,18 @@
                   <button
                     onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
                     title={theme === "light" ? "어두운 화면으로 전환" : "밝은 화면으로 전환"}
-                    className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-700 shadow-sm transition flex items-center gap-1"
+                    className="w-9 h-9 sm:w-auto sm:px-3 sm:py-1.5 rounded-xl bg-white/70 hover:bg-white border border-white/80 text-xs font-bold text-slate-700 shadow-xs transition flex items-center justify-center gap-1.5"
                   >
                     <span>{theme === "light" ? "🌙" : "☀️"}</span>
                     <span className="hidden sm:inline">
-                      {theme === "light" ? "어두운 화면" : "밝은 화면"}
+                      {theme === "light" ? "다크" : "라이트"}
                     </span>
                   </button>
 
                   <button
                     onClick={handlePlayFullJourney}
                     disabled={isJourneyPlaying || pins.length < 2}
-                    className="px-2.5 sm:px-3 py-1.5 rounded-xl timeline-btn keep-white text-xs font-extrabold disabled:opacity-40 transition flex items-center gap-1 shadow-sm"
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold disabled:opacity-40 transition flex items-center gap-1.5 shadow-xs"
                   >
                     <span>🕒</span>
                     <span>타임라인</span>
@@ -3596,7 +3784,7 @@
                   <button
                     onClick={() => setShowResetModal(true)}
                     title="동기화 및 보안 설정"
-                    className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-extrabold transition flex items-center gap-1 shadow-sm"
+                    className="w-9 h-9 rounded-xl bg-white/70 hover:bg-white border border-white/80 text-slate-700 text-xs font-bold transition flex items-center justify-center shadow-xs"
                   >
                     <span>⚙️</span>
                   </button>
@@ -3606,23 +3794,23 @@
               {/* 2단: 슬림 요약 배지(완료·도보·예산) + 최단경로·장소추가 */}
               <div className="flex items-center justify-between gap-1.5 pt-0.5">
                 <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
-                  <div className="bg-white/80 border border-slate-200 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0 shadow-sm">
-                    <span className="text-slate-500 font-bold">완료</span>
-                    <span className="font-black text-slate-900">
+                  <div className="bg-white/70 backdrop-blur-md border border-white/80 px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1.5 shrink-0 shadow-xs">
+                    <span className="text-slate-500 font-medium">완료</span>
+                    <span className="font-extrabold text-slate-900">
                       {pins.filter((p) => p.completed).length}/{pins.length}
                     </span>
                   </div>
-                  <div className="bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-xl text-[11px] flex items-center gap-1 shrink-0 shadow-sm">
-                    <span className="font-extrabold text-emerald-700">
+                  <div className="bg-emerald-50/80 backdrop-blur-md border border-emerald-100/80 px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1.5 shrink-0 shadow-xs">
+                    <span className="font-bold text-emerald-700">
                       🚶 도보 {budgetStats.totalWalkFormatted}
                     </span>
                   </div>
                   <div
                     onClick={() => switchAppView("budget")}
-                    className="hidden xs:flex sm:flex bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-xl text-[11px] items-center gap-1 cursor-pointer hover:border-indigo-400 transition shrink-0 shadow-sm"
+                    className="hidden xs:flex sm:flex bg-indigo-50/80 backdrop-blur-md border border-indigo-100/80 px-2.5 py-1 rounded-xl text-[11px] items-center gap-1.5 cursor-pointer hover:border-indigo-300 transition shrink-0 shadow-xs"
                   >
-                    <span className="text-indigo-600 font-bold">예산</span>
-                    <span className="font-black text-indigo-700">
+                    <span className="text-indigo-600 font-medium">예산</span>
+                    <span className="font-extrabold text-indigo-700">
                       {formatKRW(budgetStats.totalPlannedKRW)}
                     </span>
                   </div>
@@ -3631,53 +3819,41 @@
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={handleOptimizeShortestRoute}
-                    className="px-2.5 py-1 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] font-black shadow-sm transition"
+                    className="px-2.5 py-1 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] font-bold shadow-xs transition"
                   >
                     ⚡ 최단경로
                   </button>
                   <button
                     onClick={() => setShowAddModal(true)}
-                    className="px-2.5 py-1 rounded-xl btn-primary text-[11px] font-extrabold shadow-sm transition"
+                    className="px-2.5 py-1 rounded-xl btn-primary text-[11px] font-bold shadow-xs transition"
                   >
                     ＋ 장소추가
                   </button>
                 </div>
               </div>
 
-              {/* 데스크탑 상단 앱 탭 바 */}
-              <div className="hidden lg:grid lg:grid-cols-3 gap-2 pt-1">
+              {/* 데스크탑 상단 앱 탭 바 (iOS Segmented Control) */}
+              <div className="hidden lg:flex segmented-track mt-1">
                 <button
                   onClick={() => switchAppView("split")}
-                  className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
-                    currentView === "split"
-                      ? "bg-indigo-600 text-white border-indigo-600 shadow-md font-black"
-                      : "bg-white/80 text-slate-700 border-slate-200 hover:border-indigo-300"
-                  }`}
+                  className={`segmented-item ${currentView === "split" ? "segmented-item-active" : ""}`}
                 >
                   <span>🗺️</span>
                   <span>지도 + 여행 코스 ({pins.length})</span>
                 </button>
                 <button
                   onClick={() => switchAppView("notepad")}
-                  className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
-                    currentView === "notepad"
-                      ? "bg-amber-500 text-slate-950 border-amber-500 shadow-md font-black"
-                      : "bg-white/80 text-slate-700 border-slate-200 hover:border-amber-300"
-                  }`}
+                  className={`segmented-item ${currentView === "notepad" ? "segmented-item-active" : ""}`}
                 >
                   <span>📝</span>
                   <span>자유 메모장 · 체크리스트</span>
                 </button>
                 <button
                   onClick={() => switchAppView("budget")}
-                  className={`py-2 px-3 rounded-2xl text-xs font-extrabold border transition flex items-center justify-center gap-1.5 ${
-                    currentView === "budget"
-                      ? "bg-emerald-600 text-white border-emerald-600 shadow-md font-black"
-                      : "bg-white/80 text-slate-700 border-slate-200 hover:border-emerald-300"
-                  }`}
+                  className={`segmented-item ${currentView === "budget" ? "segmented-item-active" : ""}`}
                 >
                   <span>💰</span>
-                  <span>예산 · 1/N 정산 · 평균 비교</span>
+                  <span>예산 · 1/N 정산 · 통계</span>
                 </button>
               </div>
             </div>
@@ -3692,16 +3868,17 @@
             }`}
           >
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
-              {/* 1. 지도 패널 */}
-              <section className="lg:col-span-6 lg:order-2 flex h-[30vh] min-h-[210px] sm:h-[38vh] lg:h-[78vh] lg:sticky lg:top-32 flex-col glass-card overflow-hidden shadow-lg relative">
+              {/* 1. 지도 패널 (Apple Liquid Glass Frame) */}
+              <section className="lg:col-span-6 lg:order-2 flex h-[32vh] min-h-[220px] sm:h-[40vh] lg:h-[78vh] lg:sticky lg:top-32 flex-col map-glass-frame relative">
                 <div ref={mapContainerRef} className="w-full h-full flex-1 z-10" />
 
-                <div className="absolute top-2.5 left-2.5 right-2.5 z-20 flex items-center justify-between gap-1.5 pointer-events-none">
+                <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-none">
                   <button
                     onClick={handleFindMyLocation}
-                    className="bg-blue-600 hover:bg-blue-500 text-white border border-blue-400 px-2.5 py-1.5 rounded-xl shadow-md pointer-events-auto text-[11px] font-black flex items-center gap-1 transition"
+                    className="glass-pill-btn pointer-events-auto"
                   >
-                    🛰️ 내 위치
+                    <span>🛰️</span>
+                    <span>내 위치</span>
                   </button>
                   <button
                     onClick={() => {
@@ -3710,9 +3887,10 @@
                         mapInstanceRef.current.flyToBounds(bounds.pad(0.3), { duration: 0.8 });
                       }
                     }}
-                    className="bg-white/90 hover:bg-white border border-slate-200 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold text-slate-800 shadow-md pointer-events-auto transition backdrop-blur-md"
+                    className="glass-pill-btn pointer-events-auto"
                   >
-                    🔍 전체 코스 한눈에
+                    <span>🔍</span>
+                    <span>전체 코스</span>
                   </button>
                 </div>
 
@@ -3887,8 +4065,8 @@
                               }
                             }}
                             className={`
-                              glass-card relative p-3.5 transition-all duration-200 cursor-grab active:cursor-grabbing
-                              ${isSelected ? "ring-2 ring-indigo-400/50" : ""}
+                              pin-card relative transition-all duration-200 cursor-grab active:cursor-grabbing
+                              ${isSelected ? "pin-selected" : ""}
                               ${dragOverIndex === index ? "pin-drag-over" : ""}
                               ${pin.completed ? "opacity-75" : ""}
                             `}
@@ -3935,7 +4113,7 @@
                                   onClick={() => handleMovePinOrder(realIndex, -1)}
                                   disabled={realIndex === 0}
                                   title="위로 이동"
-                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white/80 hover:bg-white border border-slate-200 text-slate-600 disabled:opacity-25 text-[11px] flex items-center justify-center transition shadow-sm"
+                                  className="w-7 h-7 rounded-xl bg-white/70 hover:bg-white border border-white/80 text-slate-600 disabled:opacity-20 text-[11px] flex items-center justify-center transition shadow-xs"
                                 >
                                   ▲
                                 </button>
@@ -3943,7 +4121,7 @@
                                   onClick={() => handleMovePinOrder(realIndex, 1)}
                                   disabled={realIndex === pins.length - 1}
                                   title="아래로 이동"
-                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white/80 hover:bg-white border border-slate-200 text-slate-600 disabled:opacity-25 text-[11px] flex items-center justify-center transition shadow-sm"
+                                  className="w-7 h-7 rounded-xl bg-white/70 hover:bg-white border border-white/80 text-slate-600 disabled:opacity-20 text-[11px] flex items-center justify-center transition shadow-xs"
                                 >
                                   ▼
                                 </button>
@@ -3954,12 +4132,12 @@
                                       `'${pin.name}' 코스와 등록된 예산 항목(${pin.items.length}건)이 함께 삭제됩니다.`,
                                       () => {
                                         setPins((prev) => prev.filter((p) => p.id !== pin.id));
-                                        showToast(`🗑️ '${pin.name}' 코스가 삭제되었습니다.`);
+                                        showToast(`'${pin.name}' 코스가 삭제되었습니다.`);
                                       }
                                     )
                                   }
                                   title="코스 삭제"
-                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 text-xs font-black flex items-center justify-center ml-0.5 transition shadow-sm"
+                                  className="w-7 h-7 rounded-xl bg-rose-50/80 hover:bg-rose-100 border border-rose-200/80 text-rose-600 text-xs font-bold flex items-center justify-center ml-0.5 transition shadow-xs"
                                 >
                                   ✕
                                 </button>
@@ -4644,61 +4822,61 @@
                   </div>
                 </div>
 
-                {/* 2단 요약 카드 (Requirement 5: .budget-summary & .budget-stat) */}
-                <div className="glass-card budget-summary p-3">
-                  <div className="budget-stat bg-indigo-50/70 border border-indigo-100">
-                    <div className="text-[11px] font-bold text-indigo-700">총 예산</div>
-                    <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
+                {/* 메트릭 카드 4종 (Apple Liquid Glass Metric Cards) */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="metric-card">
+                    <div className="metric-label">총 예산</div>
+                    <div className="metric-value">
                       {formatKRW(totalKRW)}
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
+                    <div className="metric-sub">
                       약 {formatJPY(totalJPY)}
                     </div>
                   </div>
 
-                  <div className="budget-stat bg-emerald-50/70 border border-emerald-100">
-                    <div className="text-[11px] font-bold text-emerald-700">지출 완료</div>
-                    <div className="text-lg sm:text-2xl font-black text-emerald-700 mt-1">
+                  <div className="metric-card">
+                    <div className="metric-label">지출 완료</div>
+                    <div className="metric-value text-emerald-600">
                       {formatKRW(boughtKRW)}
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
+                    <div className="metric-sub">
                       남은 예산: {formatKRW(remainingKRW)}
                     </div>
                   </div>
 
-                  <div className="budget-stat bg-cyan-50/70 border border-cyan-100">
-                    <div className="text-[11px] font-bold text-cyan-700">📊 구글맵 1인 평균 총합</div>
-                    <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
+                  <div className="metric-card">
+                    <div className="metric-label">구글맵 1인 평균 총합</div>
+                    <div className="metric-value">
                       {formatKRW(budgetStats.totalGoogleAvgKRWPerPerson)}
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
+                    <div className="metric-sub">
                       전체 코스 ({formatJPY(budgetStats.totalGoogleAvgYenPerPerson)})
                     </div>
                   </div>
 
-                  <div className="budget-stat bg-purple-50/70 border border-purple-100">
+                  <div className="metric-card">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="text-[11px] font-bold text-purple-700">1인당 정산 (1/N)</span>
-                      <div className="flex items-center gap-1 bg-white px-2 py-0.5 rounded-lg border border-purple-200 shadow-sm">
+                      <span className="metric-label">1인당 정산 (1/N)</span>
+                      <div className="flex items-center gap-1 bg-white/80 px-2 py-0.5 rounded-lg border border-slate-200/80 shadow-xs">
                         <button
                           onClick={() => setPeopleCount((c) => Math.max(1, c - 1))}
-                          className="text-xs font-black text-purple-700 px-1"
+                          className="text-xs font-bold text-slate-700 px-1"
                         >
                           -
                         </button>
-                        <span className="text-xs font-extrabold text-slate-800">{peopleCount}명</span>
+                        <span className="text-xs font-bold text-slate-900">{peopleCount}명</span>
                         <button
                           onClick={() => setPeopleCount((c) => c + 1)}
-                          className="text-xs font-black text-purple-700 px-1"
+                          className="text-xs font-bold text-slate-700 px-1"
                         >
                           +
                         </button>
                       </div>
                     </div>
-                    <div className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
+                    <div className="metric-value">
                       {formatKRW(perPersonKRW)}
                     </div>
-                    <div className="text-[11px] text-purple-700 mt-0.5">
+                    <div className="metric-sub">
                       약 {formatJPY(Math.round(totalJPY / Math.max(1, peopleCount)))}
                     </div>
                   </div>
@@ -4858,29 +5036,29 @@
           })()}
 
           {/* =================================================================
-              📱 모바일 하단 앱 네비게이션 (Requirement 7: .bottom-tab-bar & .tab-item)
+              📱 모바일 하단 앱 네비게이션 (Apple Liquid Glass)
              ================================================================= */}
           <nav className="lg:hidden bottom-tab-bar">
             <button
               onClick={() => switchAppView("split")}
               className={`tab-item ${currentView === "split" ? "tab-item-active" : ""}`}
             >
-              <span className="text-lg leading-none mb-0.5">🗺️</span>
-              <span>지도+코스({pins.length})</span>
+              <span className="text-base">🗺️</span>
+              <span>지도 · 코스 ({pins.length})</span>
             </button>
             <button
               onClick={() => switchAppView("notepad")}
               className={`tab-item ${currentView === "notepad" ? "tab-item-active" : ""}`}
             >
-              <span className="text-lg leading-none mb-0.5">📝</span>
-              <span>메모장</span>
+              <span className="text-base">📝</span>
+              <span>메모 · 할일</span>
             </button>
             <button
               onClick={() => switchAppView("budget")}
               className={`tab-item ${currentView === "budget" ? "tab-item-active" : ""}`}
             >
-              <span className="text-lg leading-none mb-0.5">💰</span>
-              <span>예산·정산</span>
+              <span className="text-base">💰</span>
+              <span>예산 · 정산</span>
             </button>
           </nav>
 
