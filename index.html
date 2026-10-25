@@ -810,19 +810,22 @@
         id: "note-main",
         title: "✈️ 우리들의 여행 자유 메모장",
         content: "",
-        updatedAt: new Date().toLocaleString("ko-KR")
+        updatedAt: new Date().toLocaleString("ko-KR"),
+        updatedAtMs: Date.now()
       },
       {
         id: "note-food",
         title: "🍜 가보고 싶은 맛집 & 간식 리스트",
         content: "",
-        updatedAt: new Date().toLocaleString("ko-KR")
+        updatedAt: new Date().toLocaleString("ko-KR"),
+        updatedAtMs: Date.now()
       },
       {
         id: "note-info",
         title: "🏨 항공편 · 숙소 예약번호 · 중요 메모",
         content: "",
-        updatedAt: new Date().toLocaleString("ko-KR")
+        updatedAt: new Date().toLocaleString("ko-KR"),
+        updatedAtMs: Date.now()
       }
     ];
 
@@ -1233,6 +1236,24 @@
       // ☁️ 실시간 클라우드 동기화 상태 (/api/sync 보안 게이트웨이 연동)
       const [syncStatus, setSyncStatus] = useState("connecting"); // connecting | synced | saving | offline
       const [lastSyncedTime, setLastSyncedTime] = useState("");
+
+      // 📝 [수정 D] 메모장 저장 상태 피드백 ('idle' | 'saving' | 'saved' | 'error')
+      const [noteSaveStatus, setNoteSaveStatus] = useState("idle");
+      const noteSaveTimerRef = useRef(null);
+
+      const clearNoteSaveTimer = () => {
+        if (noteSaveTimerRef.current) {
+          clearTimeout(noteSaveTimerRef.current);
+          noteSaveTimerRef.current = null;
+        }
+      };
+
+      useEffect(() => {
+        return () => {
+          clearNoteSaveTimer();
+        };
+      }, []);
+
       const isInitialCloudLoadedRef = useRef(false);
       const isApplyingRemoteRef = useRef(false);
       const explicitlyClearedRef = useRef(false);
@@ -1636,16 +1657,114 @@
         }
       };
 
+      const isMeaningfulNote = (n) =>
+        Boolean(n && typeof n.content === "string" && n.content.trim().length > 0);
+
+      const hasMeaningfulNotes = (list) =>
+        Array.isArray(list) && list.some(isMeaningfulNote);
+
+      const isMeaningfulCheckItem = (c) =>
+        Boolean(c && typeof c.text === "string" && c.text.trim().length > 0);
+
+      const hasMeaningfulChecklist = (list) =>
+        Array.isArray(list) && list.some(isMeaningfulCheckItem);
+
       const hasLocalMeaningfulData = (stateObj) => {
         if (!stateObj) return false;
         if (Array.isArray(stateObj.pins) && stateObj.pins.length > 0) return true;
-        if (
-          Array.isArray(stateObj.notes) &&
-          stateObj.notes.some((n) => n && n.content && n.content.trim().length > 0)
-        ) {
-          return true;
-        }
+        if (hasMeaningfulNotes(stateObj.notes)) return true;
+        if (hasMeaningfulChecklist(stateObj.checklist)) return true;
         return false;
+      };
+
+      const mergeNotes = (localList, remoteList) => {
+        const local = Array.isArray(localList) ? localList : [];
+        const remote = Array.isArray(remoteList) ? remoteList : [];
+
+        const hasLocal = hasMeaningfulNotes(local);
+        const hasRemote = hasMeaningfulNotes(remote);
+
+        // 로컬에만 의미 있는 메모가 있고 원격엔 내용이 없으면 로컬 절대 보존
+        if (hasLocal && !hasRemote) return local;
+        // 원격에만 의미 있는 메모가 있고 로컬엔 내용이 없으면 원격 적용
+        if (!hasLocal && hasRemote) return remote;
+        // 둘 다 의미 있는 메모가 없는 경우
+        if (!hasLocal && !hasRemote) {
+          return remote.length > 0 ? remote : local;
+        }
+
+        // 양쪽 모두 의미 있는 메모가 있을 때: note.id 기준 스마트 병합
+        const remoteMap = new Map(remote.map((n) => [String(n.id || ""), n]));
+        const merged = [];
+
+        for (const lNote of local) {
+          const key = String(lNote.id || "");
+          if (remoteMap.has(key)) {
+            const rNote = remoteMap.get(key);
+            const lContent = String(lNote.content || "").trim();
+            const rContent = String(rNote.content || "").trim();
+
+            if (lContent.length > 0 && rContent.length === 0) {
+              merged.push(lNote);
+            } else if (rContent.length > 0 && lContent.length === 0) {
+              merged.push(rNote);
+            } else {
+              const lTime = Number(lNote.updatedAtMs || Date.parse(lNote.updatedAt) || 0);
+              const rTime = Number(rNote.updatedAtMs || Date.parse(rNote.updatedAt) || 0);
+
+              if (Math.abs(lTime - rTime) > 3000) {
+                merged.push(rTime > lTime ? rNote : lNote);
+              } else {
+                merged.push(rContent.length >= lContent.length ? rNote : lNote);
+              }
+            }
+            remoteMap.delete(key);
+          } else {
+            merged.push(lNote);
+          }
+        }
+
+        for (const [, rNote] of remoteMap.entries()) {
+          merged.push(rNote);
+        }
+
+        return merged.slice(0, 30);
+      };
+
+      const mergeChecklist = (localList, remoteList) => {
+        const local = Array.isArray(localList) ? localList : [];
+        const remote = Array.isArray(remoteList) ? remoteList : [];
+
+        const hasLocal = hasMeaningfulChecklist(local);
+        const hasRemote = hasMeaningfulChecklist(remote);
+
+        if (hasLocal && !hasRemote) return local;
+        if (!hasLocal && hasRemote) return remote;
+        if (!hasLocal && !hasRemote) return remote.length > 0 ? remote : local;
+
+        const remoteMap = new Map(remote.map((c) => [String(c.id || ""), c]));
+        const merged = [];
+
+        for (const lItem of local) {
+          const key = String(lItem.id || "");
+          if (remoteMap.has(key)) {
+            const rItem = remoteMap.get(key);
+            merged.push({
+              id: key,
+              text: (rItem.text || "").length >= (lItem.text || "").length ? rItem.text : lItem.text,
+              done: Boolean(rItem.done)
+            });
+            remoteMap.delete(key);
+          } else {
+            merged.push(lItem);
+          }
+        }
+
+        for (const [, rItem] of remoteMap.entries()) {
+          merged.push(rItem);
+        }
+
+        return merged.slice(0, 200);
       };
 
       const applyRemotePayload = (remote, isManual = false) => {
@@ -1673,33 +1792,28 @@
           saveSecuritySnapshot(currentLocal, "before-remote-sync");
         }
 
-        if (
-          remotePins.length === 0 &&
-          !remote.explicitlyCleared &&
-          hasLocalMeaningfulData(currentLocal)
-        ) {
-          isInitialCloudLoadedRef.current = true;
-          pushCloudData(
-            {
-              ...currentLocal,
-              forceOverwrite: true
-            },
-            true
-          );
-          return true;
-        }
-
         isApplyingRemoteRef.current = true;
         lastUpdatedAtRef.current = remoteUpdatedAt || Date.now();
 
+        // 1) 핀(pins) 방어: 원격이 비어 있고 로컬에 의미 있는 핀이 있으면 로컬 삭제 금지 및 복구 푸시
         if (Array.isArray(remote.pins)) {
-          setPins(remotePins);
-          if (remotePins.length > 0) {
-            setSelectedPinId((prevId) =>
-              remotePins.some((p) => p.id === prevId) ? prevId : remotePins[0].id
-            );
+          if (
+            remotePins.length === 0 &&
+            !remote.explicitlyCleared &&
+            Array.isArray(currentLocal.pins) &&
+            currentLocal.pins.length > 0
+          ) {
+            pushCloudData({ ...currentLocal, forceOverwrite: true }, true);
+          } else {
+            setPins(remotePins);
+            if (remotePins.length > 0) {
+              setSelectedPinId((prevId) =>
+                remotePins.some((p) => p.id === prevId) ? prevId : remotePins[0].id
+              );
+            }
           }
         }
+
         if (remote.tripTitle) {
           setTripTitle(cleanSafeText(remote.tripTitle, 80, "우리의 여행 플래너 ✈️"));
         }
@@ -1709,11 +1823,33 @@
         if (remote.peopleCount) {
           setPeopleCount(Math.max(1, Math.min(50, Math.round(Number(remote.peopleCount) || 2))));
         }
-        if (Array.isArray(remote.notes) && remote.notes.length > 0) {
-          setNotes(remote.notes.slice(0, 30));
+
+        // 2) 메모(notes) 방어 & 스마트 병합
+        if (Array.isArray(remote.notes)) {
+          const mergedNotes = mergeNotes(currentLocal.notes, remote.notes);
+          setNotes(mergedNotes);
+
+          if (
+            hasMeaningfulNotes(currentLocal.notes) &&
+            !hasMeaningfulNotes(remote.notes) &&
+            !remote.explicitlyCleared
+          ) {
+            pushCloudData({ ...currentLocal, notes: mergedNotes, forceOverwrite: true }, true);
+          }
         }
-        if (Array.isArray(remote.checklist) && remote.checklist.length > 0) {
-          setChecklist(remote.checklist.slice(0, 200));
+
+        // 3) 체크리스트(checklist) 방어 & 스마트 병합
+        if (Array.isArray(remote.checklist)) {
+          const mergedChecklist = mergeChecklist(currentLocal.checklist, remote.checklist);
+          setChecklist(mergedChecklist);
+
+          if (
+            hasMeaningfulChecklist(currentLocal.checklist) &&
+            !hasMeaningfulChecklist(remote.checklist) &&
+            !remote.explicitlyCleared
+          ) {
+            pushCloudData({ ...currentLocal, checklist: mergedChecklist, forceOverwrite: true }, true);
+          }
         }
 
         setLastSyncedTime(
@@ -1855,6 +1991,12 @@
           });
 
           if (res.status === 401 || res.status === 403) {
+            clearNoteSaveTimer();
+            setNoteSaveStatus("error");
+            noteSaveTimerRef.current = setTimeout(() => {
+              setNoteSaveStatus("idle");
+            }, 4500);
+
             const errJson = await res.json().catch(() => ({}));
             if (errJson.ipBanned) {
               setIsIpBanned(true);
@@ -1873,14 +2015,32 @@
               new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
             );
             setSyncStatus("synced");
+
+            // 📝 [수정 D] 메모 저장 직후 '저장됨 ✓' 피드백 (2.5초 후 자동 idle)
+            clearNoteSaveTimer();
+            setNoteSaveStatus("saved");
+            noteSaveTimerRef.current = setTimeout(() => {
+              setNoteSaveStatus("idle");
+            }, 2500);
+
             if (isForce) {
               showToast("☁️ 현재 기기의 일정을 클라우드에 강제 동기화했습니다!");
             }
           } else {
             setSyncStatus("offline");
+            clearNoteSaveTimer();
+            setNoteSaveStatus("error");
+            noteSaveTimerRef.current = setTimeout(() => {
+              setNoteSaveStatus("idle");
+            }, 4500);
           }
         } catch (e) {
           setSyncStatus("offline");
+          clearNoteSaveTimer();
+          setNoteSaveStatus("error");
+          noteSaveTimerRef.current = setTimeout(() => {
+            setNoteSaveStatus("idle");
+          }, 4500);
         }
       };
 
@@ -3251,26 +3411,43 @@
       );
 
       const handleUpdateNoteContent = (val) => {
-        const nowStr = new Date().toLocaleString("ko-KR");
+        clearNoteSaveTimer();
+        setNoteSaveStatus("saving");
+        const nowTs = Date.now();
+        const nowStr = new Date(nowTs).toLocaleString("ko-KR");
         setNotes((prev) =>
           prev.map((n) =>
-            n.id === activeNoteObj.id ? { ...n, content: val, updatedAt: nowStr } : n
+            n.id === activeNoteObj.id
+              ? { ...n, content: val, updatedAt: nowStr, updatedAtMs: nowTs }
+              : n
           )
         );
       };
 
       const handleUpdateNoteTitle = (val) => {
+        clearNoteSaveTimer();
+        setNoteSaveStatus("saving");
+        const nowTs = Date.now();
+        const nowStr = new Date(nowTs).toLocaleString("ko-KR");
         setNotes((prev) =>
-          prev.map((n) => (n.id === activeNoteObj.id ? { ...n, title: val } : n))
+          prev.map((n) =>
+            n.id === activeNoteObj.id
+              ? { ...n, title: val, updatedAt: nowStr, updatedAtMs: nowTs }
+              : n
+          )
         );
       };
 
       const handleAddNewNoteSheet = () => {
+        clearNoteSaveTimer();
+        setNoteSaveStatus("saving");
+        const nowTs = Date.now();
         const newSheet = {
-          id: "note-" + Date.now(),
+          id: "note-" + nowTs,
           title: `📝 새 메모장 #${notes.length + 1}`,
           content: "",
-          updatedAt: new Date().toLocaleString("ko-KR")
+          updatedAt: new Date(nowTs).toLocaleString("ko-KR"),
+          updatedAtMs: nowTs
         };
         setNotes((prev) => [...prev, newSheet]);
         setActiveNoteId(newSheet.id);
@@ -3375,6 +3552,9 @@
                 <p className="text-[11px] text-slate-600 leading-relaxed">
                   복사할 때마다 예측 불가능한 새로운 보안 난수 토큰이 생성됩니다. 동행인·참여자에게 링크를 공유하면 <b>비밀번호를 몰라도 누르는 즉시 자동으로 안전하게 접속</b>되며, 링크를 통해 실제 비밀번호를 유추할 수 없습니다.
                 </p>
+                <div className="p-2.5 rounded-xl bg-indigo-50/80 border border-indigo-200/60 text-[11px] text-indigo-900 leading-snug">
+                  💡 <strong>공유 플래너 안내:</strong> 초대 링크는 별도의 여행 방이 아니라, 모두가 동일한 일정과 메모를 함께 확인하고 편집하는 <strong>같은 공유 플래너 입장권</strong>입니다.
+                </div>
                 <button
                   type="button"
                   onClick={handleGenerateInviteTicket}
@@ -4700,9 +4880,38 @@
                     className="flex-1 w-full min-h-[340px] sm:min-h-[440px] bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 text-sm sm:text-base leading-relaxed text-slate-900 focus:outline-none focus:border-indigo-500 resize-y shadow-inner"
                   />
 
-                  <div className="flex items-center justify-between text-[11px] text-slate-500">
-                    <span>마지막 작성: {activeNoteObj.updatedAt}</span>
-                    <span>글자 수: {(activeNoteObj.content || "").length}자 · 자동 클라우드 저장</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-1">
+                    <div className="flex items-center gap-2">
+                      <span>마지막 작성: {activeNoteObj.updatedAt}</span>
+                      <span>·</span>
+                      <span>글자 수: {(activeNoteObj.content || "").length}자</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {noteSaveStatus === "saving" && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                          저장 중…
+                        </span>
+                      )}
+                      {noteSaveStatus === "saved" && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 transition-all duration-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          저장됨 ✓
+                        </span>
+                      )}
+                      {noteSaveStatus === "error" && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                          저장 실패 (이 기기에 안전 보관됨)
+                        </span>
+                      )}
+                      {noteSaveStatus === "idle" && (
+                        <span className="text-slate-400 font-medium">
+                          자동 클라우드 저장
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </section>
@@ -5289,8 +5498,8 @@
                     <span>🎲 원클릭 난수 초대 링크 복사</span>
                     <span className="text-[10px] text-pink-600 font-bold">비밀번호 노출 0%</span>
                   </div>
-                  <p className="text-[11px] text-slate-600 mt-0.5 whitespace-normal">
-                    매번 다른 보안 난수 토큰으로 생성되어 실제 비밀번호를 알 수 없으며, 누르는 즉시 플래너가 열립니다.
+                  <p className="text-[11px] text-slate-600 mt-0.5 whitespace-normal leading-relaxed">
+                    매번 다른 보안 난수 토큰으로 생성되어 실제 비밀번호를 알 수 없으며, 누르는 즉시 플래너가 열립니다. (💡 초대 링크는 별도 여행 방이 아니라 모두가 같은 일정을 함께 확인·편집하는 <strong>공유 플래너 입장권</strong>입니다)
                   </p>
                 </button>
 

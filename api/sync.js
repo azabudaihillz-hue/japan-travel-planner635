@@ -298,6 +298,108 @@ function clampNumber(val, min, max, fallback) {
   return Math.min(max, Math.max(min, num));
 }
 
+// 🛡️ 의미 있는 데이터 판별 및 병합 헬퍼 (데이터 유실 방지)
+function hasMeaningfulNotes(notesList) {
+  return (
+    Array.isArray(notesList) &&
+    notesList.some(
+      (n) => n && typeof n.content === "string" && n.content.trim().length > 0
+    )
+  );
+}
+
+function hasMeaningfulChecklist(checkList) {
+  return (
+    Array.isArray(checkList) &&
+    checkList.some(
+      (c) => c && typeof c.text === "string" && c.text.trim().length > 0
+    )
+  );
+}
+
+function mergeNotes(baseList, incomingList) {
+  const base = Array.isArray(baseList) ? baseList : [];
+  const incoming = Array.isArray(incomingList) ? incomingList : [];
+
+  const hasBase = hasMeaningfulNotes(base);
+  const hasIncoming = hasMeaningfulNotes(incoming);
+
+  if (hasBase && !hasIncoming) return base;
+  if (!hasBase && hasIncoming) return incoming;
+  if (!hasBase && !hasIncoming) return incoming.length > 0 ? incoming : base;
+
+  const baseMap = new Map(base.map((n) => [String(n.id || ""), n]));
+  const merged = [];
+
+  for (const inNote of incoming) {
+    const key = String(inNote.id || "");
+    if (baseMap.has(key)) {
+      const bNote = baseMap.get(key);
+      const bContent = String(bNote.content || "").trim();
+      const inContent = String(inNote.content || "").trim();
+
+      if (inContent.length > 0 && bContent.length === 0) {
+        merged.push(inNote);
+      } else if (bContent.length > 0 && inContent.length === 0) {
+        merged.push(bNote);
+      } else {
+        const bTime = Number(bNote.updatedAtMs || Date.parse(bNote.updatedAt) || 0);
+        const inTime = Number(inNote.updatedAtMs || Date.parse(inNote.updatedAt) || 0);
+        if (Math.abs(inTime - bTime) > 3000) {
+          merged.push(inTime > bTime ? inNote : bNote);
+        } else {
+          merged.push(inContent.length >= bContent.length ? inNote : bNote);
+        }
+      }
+      baseMap.delete(key);
+    } else {
+      merged.push(inNote);
+    }
+  }
+
+  for (const [, bNote] of baseMap.entries()) {
+    merged.push(bNote);
+  }
+
+  return merged.slice(0, 30);
+}
+
+function mergeChecklist(baseList, incomingList) {
+  const base = Array.isArray(baseList) ? baseList : [];
+  const incoming = Array.isArray(incomingList) ? incomingList : [];
+
+  const hasBase = hasMeaningfulChecklist(base);
+  const hasIncoming = hasMeaningfulChecklist(incoming);
+
+  if (hasBase && !hasIncoming) return base;
+  if (!hasBase && hasIncoming) return incoming;
+  if (!hasBase && !hasIncoming) return incoming.length > 0 ? incoming : base;
+
+  const baseMap = new Map(base.map((c) => [String(c.id || ""), c]));
+  const merged = [];
+
+  for (const inItem of incoming) {
+    const key = String(inItem.id || "");
+    if (baseMap.has(key)) {
+      const bItem = baseMap.get(key);
+      merged.push({
+        id: key,
+        text: (inItem.text || "").length >= (bItem.text || "").length ? inItem.text : bItem.text,
+        done: Boolean(inItem.done),
+      });
+      baseMap.delete(key);
+    } else {
+      merged.push(inItem);
+    }
+  }
+
+  for (const [, bItem] of baseMap.entries()) {
+    merged.push(bItem);
+  }
+
+  return merged.slice(0, 200);
+}
+
 // 🛡️ 스키마 검증 및 정제 (XSS / JSON 폭탄 / 프로토타입 오염 방지)
 function sanitizeSyncPayload(raw, securityConfig) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -390,8 +492,14 @@ function sanitizeSyncPayload(raw, securityConfig) {
         ""
       ),
       title: cleanString(n.title, 100, `📝 메모장 #${idx + 1}`),
-      content: cleanMultilineString(n.content, 20000, ""),
+      content: cleanMultilineString(n.content, 30000, ""),
       updatedAt: cleanString(n.updatedAt, 60, new Date().toLocaleString("ko-KR")),
+      updatedAtMs: clampNumber(
+        n.updatedAtMs || Date.parse(n.updatedAt) || 0,
+        0,
+        Date.now() + 60000,
+        Date.now()
+      ),
     }));
 
   const rawChecklist = Array.isArray(raw.checklist) ? raw.checklist.slice(0, 200) : [];
@@ -941,19 +1049,42 @@ module.exports = async function handler(req, res) {
         });
       }
 
-      // 빈 초기 기기가 기존 클라우드 데이터를 덮어쓰는 현상 방지
+      // 🛡️ [수정 B] 빈 초기 기기가 기존 클라우드 데이터를 덮어쓰는 현상 방지 & 스마트 데이터 보존
       const incomingPins = Array.isArray(body.pins) ? body.pins : [];
-      if (
-        incomingPins.length === 0 &&
-        !body.explicitlyCleared &&
-        !body.forceOverwrite
-      ) {
-        if (existing && Array.isArray(existing.pins) && existing.pins.length > 0) {
-          return res.status(200).json({
-            ok: false,
-            skippedEmptyOverwrite: true,
-            cloudData: stripSensitiveFieldsForClient(existing),
-          });
+      const incomingNotes = Array.isArray(body.notes) ? body.notes : [];
+      const incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
+
+      const existingPins = existing && Array.isArray(existing.pins) ? existing.pins : [];
+      const existingNotes = existing && Array.isArray(existing.notes) ? existing.notes : [];
+      const existingChecklist = existing && Array.isArray(existing.checklist) ? existing.checklist : [];
+
+      const isExplicitReset = Boolean(body.explicitlyCleared);
+      const isForceOverwrite = Boolean(body.forceOverwrite);
+
+      if (!isExplicitReset && !isForceOverwrite) {
+        // 1) 핀(pins) 방어: 들어오는 핀이 비어 있고 기존에 핀이 있으면 기존 핀 유지
+        if (incomingPins.length === 0 && existingPins.length > 0) {
+          body.pins = existingPins;
+        }
+
+        // 2) 메모(notes) 방어: 들어오는 notes 내용이 전부 비어 있고 기존에 의미 있는 메모가 있으면 기존 메모 유지 또는 병합
+        const incomingHasNotes = hasMeaningfulNotes(incomingNotes);
+        const existingHasNotes = hasMeaningfulNotes(existingNotes);
+
+        if (!incomingHasNotes && existingHasNotes) {
+          body.notes = existingNotes;
+        } else if (incomingHasNotes && existingHasNotes) {
+          body.notes = mergeNotes(existingNotes, incomingNotes);
+        }
+
+        // 3) 체크리스트(checklist) 방어: 들어오는 checklist가 비어 있고 기존에 항목이 있으면 기존 항목 유지 또는 병합
+        const incomingHasCheck = hasMeaningfulChecklist(incomingChecklist);
+        const existingHasCheck = hasMeaningfulChecklist(existingChecklist);
+
+        if (!incomingHasCheck && existingHasCheck) {
+          body.checklist = existingChecklist;
+        } else if (incomingHasCheck && existingHasCheck) {
+          body.checklist = mergeChecklist(existingChecklist, incomingChecklist);
         }
       }
 
