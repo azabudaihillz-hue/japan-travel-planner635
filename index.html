@@ -859,6 +859,7 @@
 
     // 🔒 영구 고정 저장소 키 및 보안 스냅샷 금고 키
     const STORAGE_KEY_PINS = "travel_planner_master_pins";
+    const STORAGE_KEY_DAYS = "travel_planner_master_days";
     const STORAGE_KEY_TITLE = "travel_planner_master_title";
     const STORAGE_KEY_RATE = "travel_planner_master_rate";
     const STORAGE_KEY_NOTES = "travel_planner_master_notes";
@@ -1048,6 +1049,38 @@
         if (old && old !== "여행 계획") return cleanSafeText(old, 80, "우리의 여행 플래너 ✈️");
       }
       return "우리의 여행 플래너 ✈️";
+    }
+
+    function loadSavedDaysWithMigration() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY_DAYS);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed
+              .filter((d) => d && d.id)
+              .map((d) => ({
+                id: String(d.id),
+                label: String(d.label || d.id)
+              }));
+          }
+        }
+      } catch (e) {}
+
+      try {
+        const pins = loadSavedPinsWithMigration();
+        const map = new Map();
+        pins.forEach((p) => {
+          const id = p.dayId || "day-1";
+          const label = p.dayLabel || "Day 1";
+          if (!map.has(id)) map.set(id, label);
+        });
+        if (map.size > 0) {
+          return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+        }
+      } catch (e) {}
+
+      return [{ id: "day-1", label: "Day 1" }];
     }
 
     // 📊 구글 맵 빅데이터 기반 장소/카테고리별 1인당 평균 사용 금액 추론 엔진
@@ -1362,6 +1395,7 @@
       const [theme, setTheme] = useState(() => localStorage.getItem(STORAGE_KEY_THEME) || "light");
 
       const [pins, setPins] = useState(() => loadSavedPinsWithMigration());
+      const [days, setDays] = useState(() => loadSavedDaysWithMigration());
       const [tripTitle, setTripTitle] = useState(() => loadSavedTitleWithMigration());
       const [exchangeRate, setExchangeRate] = useState(
         () => Number(localStorage.getItem(STORAGE_KEY_RATE)) || 9.05
@@ -1414,6 +1448,7 @@
       const saveTimeoutRef = useRef(null);
       const latestStateRef = useRef({
         pins,
+        days,
         tripTitle,
         exchangeRate,
         peopleCount,
@@ -1424,13 +1459,14 @@
       useEffect(() => {
         latestStateRef.current = {
           pins,
+          days,
           tripTitle,
           exchangeRate,
           peopleCount,
           notes,
           checklist
         };
-      }, [pins, tripTitle, exchangeRate, peopleCount, notes, checklist]);
+      }, [pins, days, tripTitle, exchangeRate, peopleCount, notes, checklist]);
 
       // 탭 상태: itinerary(지도&코스) | notepad(대형 메모장) | budget(예산·정산)
       const [activeTab, setActiveTab] = useState("itinerary");
@@ -1442,28 +1478,39 @@
       });
       const [expandedPinId, setExpandedPinId] = useState(null);
 
-      // A. state 추가 (드래그 인덱스, 코스 필터, 선택된 Day)
+      // A. state 추가 (드래그 인덱스, 코스 필터, 선택된 Day 및 Day 삭제 모달)
       const [dragOverIndex, setDragOverIndex] = useState(null);
       const [courseFilter, setCourseFilter] = useState("all"); // all | remaining | done
       const [selectedDayId, setSelectedDayId] = useState("all"); // all | day-1 | day-2 ...
+      const lastSelectedDayIdRef = useRef("day-1");
 
-      // C. dayOptions + visiblePins (useMemo)
+      const [dayDeleteModal, setDayDeleteModal] = useState({
+        isOpen: false,
+        dayId: "",
+        dayLabel: "",
+        pinCount: 0
+      });
+
+      useEffect(() => {
+        if (selectedDayId && selectedDayId !== "all") {
+          lastSelectedDayIdRef.current = selectedDayId;
+        }
+      }, [selectedDayId]);
+
+      // C. dayOptions + visiblePins (useMemo) — days 상태 및 pins 기반 독립 목록 생성
       const dayOptions = useMemo(() => {
         const map = new Map();
+        days.forEach((d) => {
+          if (d && d.id) map.set(d.id, d.label || d.id);
+        });
         pins.forEach((p) => {
           const id = p.dayId || "day-1";
           const label = p.dayLabel || "Day 1";
           if (!map.has(id)) map.set(id, label);
         });
         if (map.size === 0) map.set("day-1", "Day 1");
-        if (typeof window !== "undefined" && window.__pendingDayId) {
-          map.set(
-            window.__pendingDayId,
-            window.__pendingDayLabel || window.__pendingDayId
-          );
-        }
         return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
-      }, [pins, selectedDayId]);
+      }, [days, pins]);
 
       const visiblePins = useMemo(() => {
         return pins.filter((p) => {
@@ -1476,23 +1523,80 @@
         });
       }, [pins, courseFilter, selectedDayId]);
 
-      // D. Day / 드래그 핸들러
+      // D. Day 추가 및 삭제 핸들러
       const handleAddDay = () => {
         const nums = dayOptions
           .map((d) => {
-            const m = String(d.id).match(/day-(\d+)/);
+            const m = String(d.id).match(/day-(\d+)/i);
             return m ? Number(m[1]) : 0;
           })
           .filter((n) => n > 0);
         const nextNum = (nums.length ? Math.max(...nums) : 0) + 1;
         const newId = "day-" + nextNum;
         const newLabel = "Day " + nextNum;
-        if (typeof window !== "undefined") {
-          window.__pendingDayId = newId;
-          window.__pendingDayLabel = newLabel;
-        }
+
+        const newDay = { id: newId, label: newLabel };
+        setDays((prev) => {
+          if (prev.some((d) => d.id === newId)) return prev;
+          return [...prev, newDay];
+        });
         setSelectedDayId(newId);
-        showToast(`📅 ${newLabel} 선택됨 — 다음 추가 장소가 이 Day에 들어갑니다.`);
+        showToast(`📅 ${newLabel} 탭이 추가되었습니다!`);
+      };
+
+      const handleRequestDeleteDay = (dayId, dayLabel) => {
+        const pinsInDay = pins.filter((p) => (p.dayId || "day-1") === dayId);
+        setDayDeleteModal({
+          isOpen: true,
+          dayId,
+          dayLabel,
+          pinCount: pinsInDay.length
+        });
+      };
+
+      const handleConfirmDeleteEmptyDay = () => {
+        const { dayId, dayLabel } = dayDeleteModal;
+        setDays((prev) => prev.filter((d) => d.id !== dayId));
+        if (selectedDayId === dayId) {
+          setSelectedDayId("all");
+        }
+        setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 });
+        showToast(`📅 ${dayLabel}이(가) 삭제되었습니다.`);
+      };
+
+      const handleReassignAndDropDay = () => {
+        const { dayId, dayLabel } = dayDeleteModal;
+        const fallbackDay = days.find((d) => d.id !== dayId) || { id: "day-1", label: "Day 1" };
+        const fallbackDayId = fallbackDay.id;
+        const fallbackDayLabel = fallbackDay.label;
+
+        setPins((prev) =>
+          prev.map((p) =>
+            (p.dayId || "day-1") === dayId
+              ? { ...p, dayId: fallbackDayId, dayLabel: fallbackDayLabel }
+              : p
+          )
+        );
+
+        setDays((prev) => prev.filter((d) => d.id !== dayId));
+        if (selectedDayId === dayId) {
+          setSelectedDayId(fallbackDayId);
+        }
+        setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 });
+        showToast(`📅 ${dayLabel}의 장소들을 ${fallbackDayLabel}로 이동하고 Day를 삭제했습니다.`);
+      };
+
+      const handleDeletePinsAndDropDay = () => {
+        const { dayId, dayLabel, pinCount } = dayDeleteModal;
+        const fallbackDay = days.find((d) => d.id !== dayId) || { id: "day-1", label: "Day 1" };
+
+        setPins((prev) => prev.filter((p) => (p.dayId || "day-1") !== dayId));
+        setDays((prev) => prev.filter((d) => d.id !== dayId));
+        if (selectedDayId === dayId) {
+          setSelectedDayId(fallbackDay.id);
+        }
+        setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 });
+        showToast(`🗑️ ${dayLabel} 및 등록된 장소 ${pinCount}곳을 삭제했습니다.`);
       };
 
       const handleChangePinDay = (pinId, dayId, dayLabel) => {
@@ -1704,6 +1808,7 @@
             STORAGE_KEY_MASTER_V6,
             JSON.stringify({
               pins,
+              days,
               tripTitle,
               exchangeRate,
               peopleCount,
@@ -1713,7 +1818,10 @@
             })
           );
         } catch (e) {}
-      }, [pins, tripTitle, exchangeRate, peopleCount, notes, checklist]);
+      }, [pins, days, tripTitle, exchangeRate, peopleCount, notes, checklist]);
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_DAYS, JSON.stringify(days));
+      }, [days]);
       useEffect(() => {
         localStorage.setItem(STORAGE_KEY_TITLE, tripTitle);
       }, [tripTitle]);
@@ -1967,6 +2075,29 @@
           }
         }
 
+        // 1-b) 일차(days) 동기화 & 보존
+        if (Array.isArray(remote.days) && remote.days.length > 0) {
+          const remoteDays = remote.days
+            .filter((d) => d && d.id)
+            .map((d) => ({
+              id: String(d.id),
+              label: String(d.label || d.id)
+            }));
+          if (remoteDays.length > 0) {
+            setDays(remoteDays);
+          }
+        } else if (remotePins.length > 0) {
+          const map = new Map();
+          remotePins.forEach((p) => {
+            const id = p.dayId || "day-1";
+            const label = p.dayLabel || "Day 1";
+            if (!map.has(id)) map.set(id, label);
+          });
+          if (map.size > 0) {
+            setDays(Array.from(map.entries()).map(([id, label]) => ({ id, label })));
+          }
+        }
+
         if (remote.tripTitle) {
           setTripTitle(cleanSafeText(remote.tripTitle, 80, "우리의 여행 플래너 ✈️"));
         }
@@ -2094,7 +2225,14 @@
       // ☁️ 변경 사항을 보안 게이트웨이(/api/sync)에 저장
       const pushCloudData = async (customPayload, isForce = false) => {
         const activePin = (savedAuthPinRef.current || "").trim();
-        if (!activePin || !isEntryAuthenticated) return;
+        if (!activePin || !isEntryAuthenticated) {
+          clearNoteSaveTimer();
+          setNoteSaveStatus("error");
+          noteSaveTimerRef.current = setTimeout(() => {
+            setNoteSaveStatus("idle");
+          }, 4500);
+          return;
+        }
 
         try {
           const base = customPayload || latestStateRef.current;
@@ -2121,6 +2259,7 @@
 
           const payload = {
             pins: pinsList,
+            days: Array.isArray(base.days) && base.days.length > 0 ? base.days : days,
             tripTitle: cleanSafeText(base.tripTitle, 80, "우리의 여행 플래너 ✈️"),
             exchangeRate: Math.max(0.5, Math.min(100, Number(base.exchangeRate) || 9.05)),
             peopleCount: Math.max(1, Math.min(50, Math.round(Number(base.peopleCount) || 2))),
@@ -2570,7 +2709,7 @@
         };
       }, []);
 
-      // 내 기기에서 핀/제목/환율/메모장/체크리스트 수정 시 0.4초 뒤 클라우드 실시간 저장
+      // 내 기기에서 핀/일차/제목/환율/메모장/체크리스트 수정 시 0.4초 뒤 클라우드 실시간 저장
       useEffect(() => {
         if (!isEntryAuthenticated || !isInitialCloudLoadedRef.current || isApplyingRemoteRef.current) {
           return;
@@ -2580,6 +2719,7 @@
         saveTimeoutRef.current = setTimeout(() => {
           pushCloudData({
             pins,
+            days,
             tripTitle,
             exchangeRate,
             peopleCount,
@@ -2591,7 +2731,7 @@
         return () => {
           if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         };
-      }, [isEntryAuthenticated, pins, tripTitle, exchangeRate, peopleCount, notes, checklist]);
+      }, [isEntryAuthenticated, pins, days, tripTitle, exchangeRate, peopleCount, notes, checklist]);
 
       useEffect(() => {
         setTimeout(() => {
@@ -3443,14 +3583,15 @@
         const computedSpend = spendInfo || estimateGoogleAvgSpend(name, finalCategory);
 
         // E. 새 장소 추가 시 Day 붙이기
-        const pendingDayId =
-          (typeof window !== "undefined" && window.__pendingDayId) ||
+        const targetDayId =
           (selectedDayId !== "all" ? selectedDayId : null) ||
+          lastSelectedDayIdRef.current ||
+          days[0]?.id ||
           "day-1";
 
-        const pendingDayLabel =
-          (typeof window !== "undefined" && window.__pendingDayLabel) ||
-          dayOptions.find((d) => d.id === pendingDayId)?.label ||
+        const targetDayLabel =
+          dayOptions.find((d) => d.id === targetDayId)?.label ||
+          days.find((d) => d.id === targetDayId)?.label ||
           "Day 1";
 
         const newPin = {
@@ -3465,15 +3606,10 @@
           customTransitMinutes: null,
           spendInfo: computedSpend,
           items: [],
-          dayId: pendingDayId,
-          dayLabel: pendingDayLabel,
+          dayId: targetDayId,
+          dayLabel: targetDayLabel,
           localTodos: []
         };
-
-        if (typeof window !== "undefined") {
-          window.__pendingDayId = null;
-          window.__pendingDayLabel = null;
-        }
 
         setPins((prev) => {
           const nextPins = [...prev, newPin];
@@ -4031,6 +4167,80 @@
             </div>
           )}
 
+          {/* 📅 Day 삭제 확인 모달 */}
+          {dayDeleteModal.isOpen && (
+            <div
+              className="modal-overlay"
+              onClick={() => setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 })}
+            >
+              <div className="modal-panel confirm-panel max-w-sm" onClick={(e) => e.stopPropagation()}>
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto text-2xl">
+                  📅
+                </div>
+                <div className="space-y-1.5 text-center">
+                  <h3 className="font-black text-base sm:text-lg text-slate-900">
+                    {dayDeleteModal.dayLabel} 삭제
+                  </h3>
+                  {dayDeleteModal.pinCount === 0 ? (
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed break-keep">
+                      등록된 장소가 없는 빈 Day입니다. 일차 목록에서 삭제하시겠습니까?
+                    </p>
+                  ) : (
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed break-keep">
+                      이 Day에 <b>{dayDeleteModal.pinCount}곳</b>의 여행 장소가 등록되어 있습니다.
+                      장소를 어떻게 처리할까요?
+                    </p>
+                  )}
+                </div>
+
+                {dayDeleteModal.pinCount === 0 ? (
+                  <div className="grid grid-cols-2 gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 })}
+                      className="btn-ghost"
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmDeleteEmptyDay}
+                      className="btn-danger"
+                    >
+                      삭제하기
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleReassignAndDropDay}
+                      className="btn-primary w-full text-xs py-2.5 flex items-center justify-center gap-1.5"
+                    >
+                      <span>🔄</span>
+                      <span>장소를 Day 1으로 옮기고 삭제 (권장)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeletePinsAndDropDay}
+                      className="btn-danger w-full text-xs py-2.5 flex items-center justify-center gap-1.5"
+                    >
+                      <span>🗑️</span>
+                      <span>장소 {dayDeleteModal.pinCount}곳도 함께 모두 삭제</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 })}
+                      className="btn-ghost w-full text-xs py-2"
+                    >
+                      취소
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* =================================================================
               📱 상단 네이티브 앱 헤더 (Apple Liquid Glass)
              ================================================================= */}
@@ -4296,15 +4506,32 @@
                     >
                       모든 Day
                     </button>
-                    {dayOptions.map((d) => (
-                      <button
-                        key={d.id}
-                        className={`day-chip ${selectedDayId === d.id ? "day-chip-active" : "day-chip-idle"}`}
-                        onClick={() => setSelectedDayId(d.id)}
-                      >
-                        {d.label}
-                      </button>
-                    ))}
+                    {dayOptions.map((d) => {
+                      const isSelected = selectedDayId === d.id;
+                      const canDelete = dayOptions.length > 1;
+                      return (
+                        <div key={d.id} className="relative inline-flex items-center">
+                          <button
+                            className={`day-chip ${isSelected ? "day-chip-active" : "day-chip-idle"} ${canDelete ? "pr-2" : ""}`}
+                            onClick={() => setSelectedDayId(d.id)}
+                          >
+                            <span>{d.label}</span>
+                            {canDelete && (
+                              <span
+                                className="ml-1.5 w-4 h-4 rounded-full hover:bg-rose-100 hover:text-rose-600 text-slate-400 inline-flex items-center justify-center text-[10px] font-black transition"
+                                title={`${d.label} 삭제`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRequestDeleteDay(d.id, d.label);
+                                }}
+                              >
+                                ✕
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
                     <button className="day-chip day-chip-idle text-indigo-600 font-extrabold" onClick={handleAddDay}>
                       ＋ Day
                     </button>
@@ -5050,13 +5277,13 @@
                       {noteSaveStatus === "saved" && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 transition-all duration-300">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                          저장됨 ✓
+                          클라우드 저장됨 ✓
                         </span>
                       )}
                       {noteSaveStatus === "error" && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
                           <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                          저장 실패 (이 기기에 안전 보관됨)
+                          저장 실패 – 이 기기에만 있음
                         </span>
                       )}
                       {noteSaveStatus === "idle" && (

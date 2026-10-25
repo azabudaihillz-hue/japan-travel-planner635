@@ -514,8 +514,20 @@ function sanitizeSyncPayload(raw, securityConfig) {
       done: Boolean(c.done),
     }));
 
+  const rawDays = Array.isArray(raw.days) ? raw.days.slice(0, 50) : [];
+  const days = rawDays
+    .filter((d) => d && typeof d === "object")
+    .map((d, idx) => ({
+      id: cleanString(String(d.id || `day-${idx + 1}`), 32, `day-${idx + 1}`).replace(
+        /[^a-zA-Z0-9_-]/g,
+        ""
+      ),
+      label: cleanString(d.label, 40, `Day ${idx + 1}`),
+    }));
+
   return {
     pins,
+    days: days.length > 0 ? days : [{ id: "day-1", label: "Day 1" }],
     tripTitle: cleanString(raw.tripTitle, 80, "우리의 여행 ✈️"),
     exchangeRate: clampNumber(raw.exchangeRate, 0.5, 100, 9.05),
     peopleCount: Math.round(clampNumber(raw.peopleCount, 1, 50, 2)),
@@ -533,6 +545,7 @@ function stripSensitiveFieldsForClient(data) {
   if (!data || typeof data !== "object") {
     return {
       pins: [],
+      days: [{ id: "day-1", label: "Day 1" }],
       notes: [],
       checklist: [],
       empty: true,
@@ -541,6 +554,7 @@ function stripSensitiveFieldsForClient(data) {
   }
   const { lockHash, securityConfig, ...safeData } = data;
   return {
+    days: Array.isArray(safeData.days) && safeData.days.length > 0 ? safeData.days : [{ id: "day-1", label: "Day 1" }],
     ...safeData,
   };
 }
@@ -1051,10 +1065,12 @@ module.exports = async function handler(req, res) {
 
       // 🛡️ [수정 B] 빈 초기 기기가 기존 클라우드 데이터를 덮어쓰는 현상 방지 & 스마트 데이터 보존
       const incomingPins = Array.isArray(body.pins) ? body.pins : [];
+      const incomingDays = Array.isArray(body.days) ? body.days : [];
       const incomingNotes = Array.isArray(body.notes) ? body.notes : [];
       const incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
 
       const existingPins = existing && Array.isArray(existing.pins) ? existing.pins : [];
+      const existingDays = existing && Array.isArray(existing.days) ? existing.days : [];
       const existingNotes = existing && Array.isArray(existing.notes) ? existing.notes : [];
       const existingChecklist = existing && Array.isArray(existing.checklist) ? existing.checklist : [];
 
@@ -1067,7 +1083,12 @@ module.exports = async function handler(req, res) {
           body.pins = existingPins;
         }
 
-        // 2) 메모(notes) 방어: 들어오는 notes 내용이 전부 비어 있고 기존에 의미 있는 메모가 있으면 기존 메모 유지 또는 병합
+        // 2) 일차(days) 방어: 들어오는 days가 비어 있고 기존에 days가 있으면 기존 days 유지
+        if (incomingDays.length === 0 && existingDays.length > 0) {
+          body.days = existingDays;
+        }
+
+        // 3) 메모(notes) 방어: 들어오는 notes 내용이 전부 비어 있고 기존에 의미 있는 메모가 있으면 기존 메모 유지 또는 병합
         const incomingHasNotes = hasMeaningfulNotes(incomingNotes);
         const existingHasNotes = hasMeaningfulNotes(existingNotes);
 
@@ -1077,7 +1098,7 @@ module.exports = async function handler(req, res) {
           body.notes = mergeNotes(existingNotes, incomingNotes);
         }
 
-        // 3) 체크리스트(checklist) 방어: 들어오는 checklist가 비어 있고 기존에 항목이 있으면 기존 항목 유지 또는 병합
+        // 4) 체크리스트(checklist) 방어: 들어오는 checklist가 비어 있고 기존에 항목이 있으면 기존 항목 유지 또는 병합
         const incomingHasCheck = hasMeaningfulChecklist(incomingChecklist);
         const existingHasCheck = hasMeaningfulChecklist(existingChecklist);
 
