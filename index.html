@@ -941,7 +941,7 @@
                   done: Boolean(t.done)
                 }))
             : [],
-          name: cleanSafeText(p.name, 120, "여행 장소"),
+          name: typeof p.name === "string" ? cleanSafeText(p.name, 120, "") : cleanSafeText(p.name, 120, "여행 장소"),
           category: cleanSafeText(p.category, 40, "📸 명소·포토존"),
           address: cleanSafeText(p.address, 300, ""),
           lat,
@@ -1313,12 +1313,24 @@
         return { cleanUrl: null, textHint: trimmed };
       }
       const cleanUrl = urlMatch[1].replace(/[).,;]+$/, "");
-      const textHint = trimmed
-        .replace(urlMatch[0], " ")
+      const withoutUrl = trimmed
+        .replace(urlMatch[0], "\n")
         .replace(/Google\s*지도에서\s*보기/gi, "")
-        .replace(/Shared\s*via\s*Google\s*Maps/gi, "")
-        .replace(/\s+/g, " ")
-        .trim();
+        .replace(/Shared\s*via\s*Google\s*Maps/gi, "");
+
+      const lines = withoutUrl
+        .split(/\r?\n/)
+        .map((line) =>
+          line
+            .replace(/[★☆⭐]+/g, " ")
+            .replace(/\b\d\.\d\s*\([\d,]+\)/g, " ")
+            .replace(/\s+/g, " ")
+            .replace(/^[·•\-,\s]+|[·•\-,\s]+$/g, "")
+            .trim()
+        )
+        .filter(Boolean);
+
+      const textHint = lines[0] || "";
       return { cleanUrl, textHint };
     }
 
@@ -1328,31 +1340,39 @@
         const target = cleanUrl || rawInput;
         if (!target) return null;
 
-        // 모바일 구글맵 단축 링크(maps.app.goo.gl / goo.gl)는 서버 리다이렉트 추적(/api/resolve)을 거치도록 null 반환
-        if (target.includes("maps.app.goo.gl") || target.includes("goo.gl/maps") || target.includes("goo.gl/")) {
+        // 모바일 구글맵 단축 링크(maps.app.goo.gl / goo.gl / g.co)는 서버 리다이렉트 추적(/api/resolve)을 거치도록 null 반환
+        if (
+          target.includes("maps.app.goo.gl") ||
+          target.includes("goo.gl/maps") ||
+          target.includes("goo.gl/") ||
+          target.includes("g.co/")
+        ) {
           const hasInlineCoords = /(!3d-?\d+\.\d+!4d-?\d+\.\d+|@-?\d+\.\d+,-?\d+\.\d+)/.test(target);
           if (!hasInlineCoords) return null;
         }
 
-        const decoded = (() => {
+        const safeDecode = (str) => {
+          if (!str) return "";
           try {
-            return decodeURIComponent(target);
-          } catch (e) {
-            return target;
+            return decodeURIComponent(str.replace(/\+/g, " "));
+          } catch {
+            return str.replace(/\+/g, " ");
           }
-        })();
+        };
+
+        const decoded = safeDecode(target);
 
         let name = textHint || "구글 지도 공유 장소";
-        const placeMatch = decoded.match(/\/maps\/(?:place|search)\/([^/@?&]+)/);
+        const placeMatch = target.match(/\/maps\/(?:place|search)\/([^/@?&]+)/i);
         if (placeMatch && placeMatch[1]) {
-          const candidate = placeMatch[1].replace(/\+/g, " ").trim();
+          const candidate = safeDecode(placeMatch[1]).trim();
           if (candidate && !/^(-?\d+\.\d+),(-?\d+\.\d+)$/.test(candidate)) {
             name = candidate;
           }
         } else {
-          const qMatch = decoded.match(/[?&](?:q|query)=([^&]+)/);
+          const qMatch = target.match(/[?&](?:q|query)=([^&]+)/i);
           if (qMatch && qMatch[1]) {
-            const candidate = qMatch[1].replace(/\+/g, " ").trim();
+            const candidate = safeDecode(qMatch[1]).trim();
             if (candidate && !/^(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)$/.test(candidate)) {
               name = candidate;
             }
@@ -1377,7 +1397,7 @@
           }
         }
 
-        if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+        if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng) && !(lat === 0 && lng === 0)) {
           return {
             name,
             address: textHint || `구글 지도 링크 정확한 좌표 (${lat.toFixed(5)}, ${lng.toFixed(5)})`,
@@ -1421,12 +1441,15 @@
       const [newCheckText, setNewCheckText] = useState("");
 
       // ☁️ 실시간 클라우드 동기화 상태 (/api/sync 보안 게이트웨이 연동)
-      const [syncStatus, setSyncStatus] = useState("connecting"); // connecting | synced | saving | offline
+      const [syncStatus, setSyncStatus] = useState("connecting"); // connecting | local_saved | saving | synced | offline
       const [lastSyncedTime, setLastSyncedTime] = useState("");
 
-      // 📝 [수정 D] 메모장 저장 상태 피드백 ('idle' | 'saving' | 'saved' | 'error')
+      // 📝 메모장 & 로컬/클라우드 저장 상태 피드백 ('idle' | 'local_saved' | 'saving' | 'saved' | 'error')
       const [noteSaveStatus, setNoteSaveStatus] = useState("idle");
       const noteSaveTimerRef = useRef(null);
+      const noteDebounceTimerRef = useRef(null);
+      const pushAbortRef = useRef(null);
+      const pushSeqRef = useRef(0);
 
       const clearNoteSaveTimer = () => {
         if (noteSaveTimerRef.current) {
@@ -1438,6 +1461,13 @@
       useEffect(() => {
         return () => {
           clearNoteSaveTimer();
+          if (noteDebounceTimerRef.current) clearTimeout(noteDebounceTimerRef.current);
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          if (pushAbortRef.current) {
+            try {
+              pushAbortRef.current.abort();
+            } catch {}
+          }
         };
       }, []);
 
@@ -1746,6 +1776,7 @@
       const [customCategory, setCustomCategory] = useState("🏨 숙소·호텔");
 
       const [editingPinId, setEditingPinId] = useState(null);
+      const [inlineEditingPinId, setInlineEditingPinId] = useState(null);
       const [editNameText, setEditNameText] = useState("");
       const [editCategoryText, setEditCategoryText] = useState("🏨 숙소·호텔");
 
@@ -2222,10 +2253,11 @@
         }
       };
 
-      // ☁️ 변경 사항을 보안 게이트웨이(/api/sync)에 저장
+      // ☁️ 변경 사항을 보안 게이트웨이(/api/sync)에 백그라운드 저장 (연속 입력 시 마지막 요청만 반영 & 영구 saving 방지)
       const pushCloudData = async (customPayload, isForce = false) => {
         const activePin = (savedAuthPinRef.current || "").trim();
         if (!activePin || !isEntryAuthenticated) {
+          setSyncStatus("offline");
           clearNoteSaveTimer();
           setNoteSaveStatus("error");
           noteSaveTimerRef.current = setTimeout(() => {
@@ -2233,6 +2265,20 @@
           }, 4500);
           return;
         }
+
+        const reqSeq = ++pushSeqRef.current;
+        if (pushAbortRef.current) {
+          try {
+            pushAbortRef.current.abort();
+          } catch {}
+        }
+        const controller = new AbortController();
+        pushAbortRef.current = controller;
+        const timeoutId = setTimeout(() => {
+          try {
+            controller.abort();
+          } catch {}
+        }, 7500);
 
         try {
           const base = customPayload || latestStateRef.current;
@@ -2249,11 +2295,16 @@
             !base.forceOverwrite &&
             !hasLocalMeaningfulData(base)
           ) {
-            setSyncStatus("synced");
+            clearTimeout(timeoutId);
+            if (reqSeq === pushSeqRef.current) {
+              setSyncStatus("synced");
+              setNoteSaveStatus("idle");
+            }
             return;
           }
 
           setSyncStatus("saving");
+          setNoteSaveStatus("saving");
           const nowTs = Date.now();
           lastUpdatedAtRef.current = nowTs;
 
@@ -2279,10 +2330,14 @@
               "X-Requested-With": CSRF_HEADER_VALUE,
               "X-Planner-Pin": activePin
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
           });
 
+          if (reqSeq !== pushSeqRef.current) return;
+
           if (res.status === 401 || res.status === 403) {
+            setSyncStatus("offline");
             clearNoteSaveTimer();
             setNoteSaveStatus("error");
             noteSaveTimerRef.current = setTimeout(() => {
@@ -2308,7 +2363,7 @@
             );
             setSyncStatus("synced");
 
-            // 📝 [수정 D] 메모 저장 직후 '저장됨 ✓' 피드백 (2.5초 후 자동 idle)
+            // 📝 클라우드 동기화 완료 피드백 (2.5초 후 자동 idle)
             clearNoteSaveTimer();
             setNoteSaveStatus("saved");
             noteSaveTimerRef.current = setTimeout(() => {
@@ -2327,12 +2382,15 @@
             }, 4500);
           }
         } catch (e) {
+          if (reqSeq !== pushSeqRef.current) return;
           setSyncStatus("offline");
           clearNoteSaveTimer();
           setNoteSaveStatus("error");
           noteSaveTimerRef.current = setTimeout(() => {
             setNoteSaveStatus("idle");
           }, 4500);
+        } finally {
+          clearTimeout(timeoutId);
         }
       };
 
@@ -2709,29 +2767,39 @@
         };
       }, []);
 
-      // 내 기기에서 핀/일차/제목/환율/메모장/체크리스트 수정 시 0.4초 뒤 클라우드 실시간 저장
+      // 1) 핀/일차/제목/환율/체크리스트 수정 시 즉시 '이 기기 저장됨' 표시 후 300ms 뒤 클라우드 백그라운드 동기화
       useEffect(() => {
         if (!isEntryAuthenticated || !isInitialCloudLoadedRef.current || isApplyingRemoteRef.current) {
           return;
         }
+        setSyncStatus("local_saved");
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
         saveTimeoutRef.current = setTimeout(() => {
-          pushCloudData({
-            pins,
-            days,
-            tripTitle,
-            exchangeRate,
-            peopleCount,
-            notes,
-            checklist
-          });
-        }, 400);
+          pushCloudData(latestStateRef.current);
+        }, 300);
 
         return () => {
           if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         };
-      }, [isEntryAuthenticated, pins, days, tripTitle, exchangeRate, peopleCount, notes, checklist]);
+      }, [isEntryAuthenticated, pins, days, tripTitle, exchangeRate, peopleCount, checklist]);
+
+      // 2) 메모장(notes) 수정 시 즉시 '이 기기 저장됨' 표시 후 1000ms(0.8~1.5초) 디바운스로 마지막 payload만 전송
+      useEffect(() => {
+        if (!isEntryAuthenticated || !isInitialCloudLoadedRef.current || isApplyingRemoteRef.current) {
+          return;
+        }
+        setSyncStatus("local_saved");
+        if (noteDebounceTimerRef.current) clearTimeout(noteDebounceTimerRef.current);
+
+        noteDebounceTimerRef.current = setTimeout(() => {
+          pushCloudData(latestStateRef.current);
+        }, 1000);
+
+        return () => {
+          if (noteDebounceTimerRef.current) clearTimeout(noteDebounceTimerRef.current);
+        };
+      }, [isEntryAuthenticated, notes]);
 
       useEffect(() => {
         setTimeout(() => {
@@ -3645,21 +3713,68 @@
 
 // (Drag handlers moved to top of App component)
 
-      const handleSavePinEdit = (pinId) => {
-        if (!editNameText.trim()) return;
-        setPins((prev) =>
-          prev.map((p) =>
+      const handleUpdatePinNameInline = (pinId, newName) => {
+        const cleanVal = String(newName ?? "").slice(0, 120);
+        setSyncStatus("local_saved");
+        setPins((prev) => {
+          const nextPins = prev.map((p) =>
             p.id === pinId
               ? {
                   ...p,
-                  name: editNameText.trim(),
-                  category: editCategoryText,
-                  spendInfo: estimateGoogleAvgSpend(editNameText.trim(), editCategoryText)
+                  name: cleanVal,
+                  spendInfo: cleanVal.trim()
+                    ? estimateGoogleAvgSpend(cleanVal.trim(), p.category)
+                    : p.spendInfo
                 }
               : p
-          )
-        );
+          );
+          try {
+            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
+          } catch {}
+          return nextPins;
+        });
+        if (editingPinId === pinId) {
+          setEditNameText(cleanVal);
+        }
+      };
+
+      const handleClearPinName = (pinId, e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        setSyncStatus("local_saved");
+        setPins((prev) => {
+          const nextPins = prev.map((p) => (p.id === pinId ? { ...p, name: "" } : p));
+          try {
+            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
+          } catch {}
+          return nextPins;
+        });
+        if (editingPinId === pinId) {
+          setEditNameText("");
+        }
+        setInlineEditingPinId(pinId);
+      };
+
+      const handleSavePinEdit = (pinId) => {
+        const trimmedName = editNameText.trim();
+        setSyncStatus("local_saved");
+        setPins((prev) => {
+          const nextPins = prev.map((p) =>
+            p.id === pinId
+              ? {
+                  ...p,
+                  name: trimmedName,
+                  category: editCategoryText,
+                  spendInfo: estimateGoogleAvgSpend(trimmedName || p.address || "", editCategoryText)
+                }
+              : p
+          );
+          try {
+            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
+          } catch {}
+          return nextPins;
+        });
         setEditingPinId(null);
+        setInlineEditingPinId(null);
         showToast("✏️ 장소 정보가 수정되었습니다.");
       };
 
@@ -3693,7 +3808,7 @@
         showToast(`🛍️ '${newItem.title}' 예산 항목이 추가되었습니다.`);
       };
 
-      // 📝 대형 메모장 핸들러
+      // 📝 대형 메모장 핸들러 (즉시 localStorage 반영 + '이 기기 저장됨' 피드백)
       const activeNoteObj = useMemo(
         () => notes.find((n) => n.id === activeNoteId) || notes[0] || DEFAULT_NOTE_PAD[0],
         [notes, activeNoteId]
@@ -3701,35 +3816,46 @@
 
       const handleUpdateNoteContent = (val) => {
         clearNoteSaveTimer();
-        setNoteSaveStatus("saving");
+        setNoteSaveStatus("local_saved");
+        setSyncStatus("local_saved");
         const nowTs = Date.now();
         const nowStr = new Date(nowTs).toLocaleString("ko-KR");
-        setNotes((prev) =>
-          prev.map((n) =>
+        setNotes((prev) => {
+          const nextNotes = prev.map((n) =>
             n.id === activeNoteObj.id
               ? { ...n, content: val, updatedAt: nowStr, updatedAtMs: nowTs }
               : n
-          )
-        );
+          );
+          try {
+            localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(nextNotes));
+          } catch {}
+          return nextNotes;
+        });
       };
 
       const handleUpdateNoteTitle = (val) => {
         clearNoteSaveTimer();
-        setNoteSaveStatus("saving");
+        setNoteSaveStatus("local_saved");
+        setSyncStatus("local_saved");
         const nowTs = Date.now();
         const nowStr = new Date(nowTs).toLocaleString("ko-KR");
-        setNotes((prev) =>
-          prev.map((n) =>
+        setNotes((prev) => {
+          const nextNotes = prev.map((n) =>
             n.id === activeNoteObj.id
               ? { ...n, title: val, updatedAt: nowStr, updatedAtMs: nowTs }
               : n
-          )
-        );
+          );
+          try {
+            localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(nextNotes));
+          } catch {}
+          return nextNotes;
+        });
       };
 
       const handleAddNewNoteSheet = () => {
         clearNoteSaveTimer();
-        setNoteSaveStatus("saving");
+        setNoteSaveStatus("local_saved");
+        setSyncStatus("local_saved");
         const nowTs = Date.now();
         const newSheet = {
           id: "note-" + nowTs,
@@ -3738,7 +3864,13 @@
           updatedAt: new Date(nowTs).toLocaleString("ko-KR"),
           updatedAtMs: nowTs
         };
-        setNotes((prev) => [...prev, newSheet]);
+        setNotes((prev) => {
+          const nextNotes = [...prev, newSheet];
+          try {
+            localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(nextNotes));
+          } catch {}
+          return nextNotes;
+        });
         setActiveNoteId(newSheet.id);
         showToast("📝 새 메모 시트가 추가되었습니다!");
       };
@@ -4275,28 +4407,36 @@
                     title="클릭하여 즉시 동기화"
                     className="px-2.5 py-1.5 rounded-full text-[11px] font-bold bg-white/70 hover:bg-white/90 border border-white/80 shadow-xs flex items-center gap-1.5 shrink-0 transition"
                   >
+                    {syncStatus === "local_saved" && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-sky-500 shadow-xs"></span>
+                        <span className="text-sky-700">이 기기 저장됨</span>
+                      </>
+                    )}
                     {syncStatus === "synced" && (
                       <>
                         <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-xs"></span>
-                        <span className="text-slate-700 hidden sm:inline">동기화됨</span>
+                        <span className="text-slate-700 hidden sm:inline">클라우드 동기화됨</span>
+                        <span className="text-slate-700 sm:hidden">동기화됨</span>
                       </>
                     )}
                     {syncStatus === "saving" && (
                       <>
                         <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                        <span className="text-amber-700">저장 중</span>
+                        <span className="text-amber-700">동기화 중…</span>
                       </>
                     )}
                     {syncStatus === "connecting" && (
                       <>
                         <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
-                        <span className="text-indigo-700">연결 중</span>
+                        <span className="text-indigo-700">연결 중…</span>
                       </>
                     )}
                     {syncStatus === "offline" && (
                       <>
                         <span className="w-2 h-2 rounded-full bg-rose-400"></span>
-                        <span className="text-rose-700">재시도</span>
+                        <span className="text-rose-700 hidden sm:inline">동기화 실패 · 이 기기만</span>
+                        <span className="text-rose-700 sm:hidden">이 기기만</span>
                       </>
                     )}
                   </button>
@@ -4661,7 +4801,74 @@
                                     </span>
                                   )}
                                 </div>
-                                <h3 className="pin-title truncate">{pin.name}</h3>
+                                {/* C. 장소 이름 영역: 우측 끝 작은 회색 × 클리어 버튼 + 즉시 인라인 입력 */}
+                                {inlineEditingPinId === pin.id || !pin.name ? (
+                                  <div
+                                    className="flex items-center gap-1 my-0.5"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="relative flex-1 min-w-0 flex items-center">
+                                      <input
+                                        type="text"
+                                        autoFocus={inlineEditingPinId === pin.id}
+                                        spellCheck={false}
+                                        autoCorrect="off"
+                                        autoCapitalize="off"
+                                        autoComplete="off"
+                                        value={pin.name || ""}
+                                        placeholder="장소 이름"
+                                        onChange={(e) => handleUpdatePinNameInline(pin.id, e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter" || e.key === "Escape") {
+                                            e.currentTarget.blur();
+                                            setInlineEditingPinId(null);
+                                          }
+                                        }}
+                                        onBlur={() => setInlineEditingPinId(null)}
+                                        className="w-full min-w-0 bg-white/95 border border-indigo-300 focus:border-indigo-500 rounded-lg pl-2.5 pr-7 py-1 text-sm font-extrabold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                                      />
+                                      {pin.name && (
+                                        <button
+                                          type="button"
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            handleClearPinName(pin.id, e);
+                                          }}
+                                          title="장소 이름만 비우기 (장소는 삭제되지 않음)"
+                                          aria-label="장소 이름 비우기"
+                                          className="absolute right-1.5 w-5 h-5 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-500 hover:text-slate-700 text-xs font-bold flex items-center justify-center transition"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between gap-1.5">
+                                    <h3
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setInlineEditingPinId(pin.id);
+                                      }}
+                                      title="클릭하여 장소 이름 수정"
+                                      className="pin-title truncate flex-1 min-w-0 cursor-text hover:text-indigo-700 transition-colors"
+                                    >
+                                      {pin.name}
+                                    </h3>
+                                    {pin.name && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleClearPinName(pin.id, e)}
+                                        title="장소 이름만 지우고 다시 입력 (장소 자체는 삭제되지 않음)"
+                                        aria-label="장소 이름 지우기"
+                                        className="w-6 h-6 rounded-full bg-slate-100/90 hover:bg-slate-200 active:bg-slate-300 border border-slate-200/80 text-slate-400 hover:text-slate-600 text-xs font-bold flex items-center justify-center shrink-0 transition"
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+
                                 <p className="pin-meta truncate mt-0.5">{pin.address}</p>
                               </div>
 
@@ -4689,10 +4896,10 @@
                                   onClick={() =>
                                     requestDeleteConfirm(
                                       "코스를 삭제하시겠습니까?",
-                                      `'${pin.name}' 코스와 등록된 예산 항목(${pin.items.length}건)이 함께 삭제됩니다.`,
+                                      `'${pin.name || "선택한 장소"}' 코스와 등록된 예산 항목(${pin.items.length}건)이 함께 삭제됩니다.`,
                                       () => {
                                         setPins((prev) => prev.filter((p) => p.id !== pin.id));
-                                        showToast(`'${pin.name}' 코스가 삭제되었습니다.`);
+                                        showToast(`'${pin.name || "장소"}' 코스가 삭제되었습니다.`);
                                       }
                                     )
                                   }
@@ -4819,7 +5026,7 @@
                                     </button>
                                     <a
                                       href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                        pin.name
+                                        pin.name || pin.address || ""
                                       )}`}
                                       target="_blank"
                                       rel="noreferrer"
@@ -4848,16 +5055,30 @@
                                         <option>✈️ 공항·교통</option>
                                       </select>
                                       <div className="flex gap-1.5 flex-1">
-                                        <input
-                                          type="text"
-                                          spellCheck={false}
-                                          autoCorrect="off"
-                                          autoCapitalize="off"
-                                          autoComplete="off"
-                                          value={editNameText}
-                                          onChange={(e) => setEditNameText(e.target.value)}
-                                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
-                                        />
+                                        <div className="relative flex-1 flex items-center">
+                                          <input
+                                            type="text"
+                                            spellCheck={false}
+                                            autoCorrect="off"
+                                            autoCapitalize="off"
+                                            autoComplete="off"
+                                            placeholder="장소 이름"
+                                            value={editNameText}
+                                            onChange={(e) => setEditNameText(e.target.value)}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-8 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
+                                          />
+                                          {editNameText && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditNameText("")}
+                                              title="장소 이름 지우기"
+                                              aria-label="장소 이름 지우기"
+                                              className="absolute right-2 w-5 h-5 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-500 hover:text-slate-700 text-xs font-bold flex items-center justify-center transition"
+                                            >
+                                              ×
+                                            </button>
+                                          )}
+                                        </div>
                                         <button
                                           type="button"
                                           onClick={() => handleSavePinEdit(pin.id)}
@@ -5268,27 +5489,33 @@
                     </div>
 
                     <div className="flex items-center gap-1.5">
+                      {noteSaveStatus === "local_saved" && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+                          이 기기 저장됨
+                        </span>
+                      )}
                       {noteSaveStatus === "saving" && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                          저장 중…
+                          클라우드 동기화 중…
                         </span>
                       )}
                       {noteSaveStatus === "saved" && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 transition-all duration-300">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                          클라우드 저장됨 ✓
+                          클라우드 동기화됨 ✓
                         </span>
                       )}
                       {noteSaveStatus === "error" && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
                           <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                          저장 실패 – 이 기기에만 있음
+                          동기화 실패 – 이 기기에만 있음
                         </span>
                       )}
                       {noteSaveStatus === "idle" && (
                         <span className="text-slate-400 font-medium">
-                          자동 클라우드 저장
+                          이 기기 저장됨 · 자동 동기화
                         </span>
                       )}
                     </div>

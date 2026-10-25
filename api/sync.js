@@ -467,7 +467,7 @@ function sanitizeSyncPayload(raw, securityConfig) {
       ),
       dayLabel: cleanString(p.dayLabel, 40, "Day 1"),
       localTodos,
-      name: cleanString(p.name, 120, "여행 장소"),
+      name: typeof p.name === "string" ? cleanString(p.name, 120, "") : cleanString(p.name, 120, "여행 장소"),
       category: cleanString(p.category, 40, "📸 명소·포토존"),
       address: cleanString(p.address, 300, ""),
       lat,
