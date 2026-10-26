@@ -2313,7 +2313,9 @@
             }
           }
         } catch (e) {
-          setSyncStatus("offline");
+          if (isManual || !isInitialCloudLoadedRef.current) {
+            setSyncStatus("offline");
+          }
           setIsEntryChecking(false);
           isInitialCloudLoadedRef.current = true;
         }
@@ -2322,7 +2324,7 @@
       // ☁️ 변경 사항을 보안 게이트웨이(/api/sync)에 백그라운드 저장 (연속 입력 시 마지막 요청만 반영 & 영구 saving 방지)
       const pushCloudData = async (customPayload, isForce = false) => {
         const activePin = (savedAuthPinRef.current || "").trim();
-        if (!activePin || !isEntryAuthenticated) {
+        if (!activePin) {
           setSyncStatus("offline");
           clearNoteSaveTimer();
           setNoteSaveStatus("error");
@@ -2344,7 +2346,7 @@
           try {
             controller.abort();
           } catch {}
-        }, 7500);
+        }, 8500);
 
         try {
           const base = customPayload || latestStateRef.current;
@@ -2389,16 +2391,26 @@
             authPin: activePin
           };
 
-          const res = await fetch("/api/sync", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": CSRF_HEADER_VALUE,
-              "X-Planner-Pin": encodeURIComponent(activePin)
-            },
-            body: JSON.stringify(payload),
-            signal: controller.signal
-          });
+          const executePost = async () =>
+            fetch("/api/sync", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Requested-With": CSRF_HEADER_VALUE,
+                "X-Planner-Pin": encodeURIComponent(activePin)
+              },
+              body: JSON.stringify(payload),
+              signal: controller.signal
+            });
+
+          let res = await executePost();
+          // 일시적 서버 지연(5xx) 발생 시 600ms 후 1회 자동 재시도
+          if (!res.ok && res.status >= 500 && reqSeq === pushSeqRef.current) {
+            await new Promise((r) => setTimeout(r, 600));
+            if (reqSeq === pushSeqRef.current) {
+              res = await executePost();
+            }
+          }
 
           if (reqSeq !== pushSeqRef.current) return;
 
@@ -2453,6 +2465,7 @@
           }
         } catch (e) {
           if (reqSeq !== pushSeqRef.current) return;
+          if (e && e.name === "AbortError") return;
           setSyncStatus("offline");
           clearNoteSaveTimer();
           setNoteSaveStatus("error");
@@ -2531,9 +2544,19 @@
             setEntryErrorMsg("");
             setIsEntryAuthenticated(true);
             syncAdminAndInviteLists(data);
+            setSyncStatus("synced");
+            setNoteSaveStatus("idle");
+            setLastSyncedTime(
+              new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+            );
 
             if (data.cloudData && !data.cloudData.empty) {
               applyRemotePayload(data.cloudData, false);
+            } else {
+              const currentLocal = latestStateRef.current;
+              if (hasLocalMeaningfulData(currentLocal)) {
+                pushCloudData({ ...currentLocal, forceOverwrite: true }, false);
+              }
             }
             isInitialCloudLoadedRef.current = true;
 
@@ -2960,8 +2983,18 @@
             setIsEntryAuthenticated(true);
             setIsEntryChecking(false);
             syncAdminAndInviteLists(data);
+            setSyncStatus("synced");
+            setNoteSaveStatus("idle");
+            setLastSyncedTime(
+              new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+            );
             if (data.cloudData && !data.cloudData.empty) {
               applyRemotePayload(data.cloudData, false);
+            } else {
+              const currentLocal = latestStateRef.current;
+              if (hasLocalMeaningfulData(currentLocal)) {
+                pushCloudData({ ...currentLocal, forceOverwrite: true }, false);
+              }
             }
             isInitialCloudLoadedRef.current = true;
             showToast(
@@ -3035,6 +3068,8 @@
           if (
             savedAuthPinRef.current &&
             !isApplyingRemoteRef.current &&
+            !saveTimeoutRef.current &&
+            !noteDebounceTimerRef.current &&
             document.visibilityState === "visible"
           ) {
             fetchCloudData(false, savedAuthPinRef.current);
@@ -3045,7 +3080,9 @@
           if (
             savedAuthPinRef.current &&
             document.visibilityState === "visible" &&
-            !isApplyingRemoteRef.current
+            !isApplyingRemoteRef.current &&
+            !saveTimeoutRef.current &&
+            !noteDebounceTimerRef.current
           ) {
             fetchCloudData(false, savedAuthPinRef.current);
           }
@@ -3069,13 +3106,17 @@
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
         saveTimeoutRef.current = setTimeout(() => {
+          saveTimeoutRef.current = null;
           pushCloudData(latestStateRef.current);
         }, 300);
 
         return () => {
-          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+          }
         };
-      }, [isEntryAuthenticated, pins, days, tripTitle, exchangeRate, peopleCount, checklist]);
+      }, [pins, days, tripTitle, exchangeRate, peopleCount, checklist]);
 
       // 2) 메모장(notes) 수정 시 즉시 '이 기기 저장됨' 표시 후 1000ms(0.8~1.5초) 디바운스로 마지막 payload만 전송
       useEffect(() => {
@@ -3086,13 +3127,17 @@
         if (noteDebounceTimerRef.current) clearTimeout(noteDebounceTimerRef.current);
 
         noteDebounceTimerRef.current = setTimeout(() => {
+          noteDebounceTimerRef.current = null;
           pushCloudData(latestStateRef.current);
         }, 1000);
 
         return () => {
-          if (noteDebounceTimerRef.current) clearTimeout(noteDebounceTimerRef.current);
+          if (noteDebounceTimerRef.current) {
+            clearTimeout(noteDebounceTimerRef.current);
+            noteDebounceTimerRef.current = null;
+          }
         };
-      }, [isEntryAuthenticated, notes]);
+      }, [notes]);
 
       useEffect(() => {
         setTimeout(() => {

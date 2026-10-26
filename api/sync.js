@@ -12,17 +12,170 @@
 
 const crypto = require("crypto");
 
-// NOTE: Vercel Environment Variables 설정 (다중 환경변수 키 이름 폴백 지원)
-const SUPABASE_URL =
-  process.env.SUPABASE_URL ||
-  process.env.EXPO_PUBLIC_SUPABASE_URL ||
-  process.env.EXPO_PUBLIC_COUPLE_SUPABASE_URL ||
-  process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// NOTE: Vercel Environment Variables 설정 (다중 환경변수 키 이름 및 _ 변형 키 폴백 + JWT ref 기반 URL 자동 복원 지원)
+function cleanEnvToken(val) {
+  if (typeof val !== "string") return "";
+  return val
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/[\r\n\t]+/g, "")
+    .trim();
+}
+
+function parseSupabaseAnonJwt(rawToken) {
+  const token = cleanEnvToken(rawToken).replace(/\s+/g, "");
+  if (!token.startsWith("eyJ")) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const jsonStr = Buffer.from(parts[1], "base64url").toString("utf8");
+    const payload = JSON.parse(jsonStr);
+    if (!payload || typeof payload !== "object") return null;
+    if (payload.role === "service_role") return null;
+    if (payload.iss === "supabase" || typeof payload.ref === "string") {
+      return {
+        token,
+        ref: typeof payload.ref === "string" ? payload.ref.trim() : "",
+        role: payload.role || "anon",
+      };
+    }
+  } catch {}
+  return null;
+}
+
+function normalizeSupabaseBaseUrl(rawUrl) {
+  const cleaned = cleanEnvToken(rawUrl).replace(/\s+/g, "");
+  if (!cleaned) return "";
+
+  const dashMatch = cleaned.match(/supabase\.com\/dashboard\/project\/([a-z0-9-]+)/i);
+  if (dashMatch && dashMatch[1]) {
+    return `https://${dashMatch[1].toLowerCase()}.supabase.co`;
+  }
+
+  const hostMatch = cleaned.match(/([a-z0-9-]{12,40})\.supabase\.co/i);
+  if (hostMatch && hostMatch[1]) {
+    return `https://${hostMatch[1].toLowerCase()}.supabase.co`;
+  }
+
+  if (/^https?:\/\//i.test(cleaned)) {
+    return cleaned.replace(/\/rest\/v1.*$/i, "").replace(/\/+$/, "");
+  }
+  return "";
+}
+
+let cachedWorkingCreds = null;
+
+function resolveSupabaseCredentialsList() {
+  const env = process.env || {};
+  const urlPriorityKeys = [
+    "EXPO_PUBLIC_COUPLE_SUPABASE_URL",
+    "EXPO_PUBLIC_COUPLE_SUPABASE_URL_",
+    "EXPO_PUBLIC__COUPLE_SUPABASE_URL",
+    "SUPABASE_URL_",
+    "SUPABASE__URL",
+    "_SUPABASE_URL",
+    "EXPO_PUBLIC_SUPABASE_URL_",
+    "EXPO_PUBLIC__SUPABASE_URL",
+    "SUPABASE_URL",
+    "EXPO_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "VITE_SUPABASE_URL",
+  ];
+
+  const keyPriorityKeys = [
+    "EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY",
+    "EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY_",
+    "EXPO_PUBLIC__COUPLE_SUPABASE_ANON_KEY",
+    "SUPABASE_ANON_KEY_",
+    "SUPABASE__ANON_KEY",
+    "_SUPABASE_ANON_KEY",
+    "EXPO_PUBLIC_SUPABASE_ANON_KEY_",
+    "EXPO_PUBLIC__SUPABASE_ANON_KEY",
+    "SUPABASE_ANON_KEY",
+    "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "VITE_SUPABASE_ANON_KEY",
+  ];
+
+  const urlSet = new Set();
+  const keyList = [];
+  const keySeen = new Set();
+
+  const addKeyCandidate = (rawVal) => {
+    const cleaned = cleanEnvToken(rawVal).replace(/\s+/g, "");
+    if (!cleaned || cleaned.length < 20 || keySeen.has(cleaned)) return;
+    if (/^https?:\/\//i.test(cleaned)) return;
+    const jwtInfo = parseSupabaseAnonJwt(cleaned);
+    keySeen.add(cleaned);
+    keyList.push({
+      key: jwtInfo ? jwtInfo.token : cleaned,
+      refUrl:
+        jwtInfo && jwtInfo.ref ? `https://${jwtInfo.ref.toLowerCase()}.supabase.co` : "",
+      isVerifiedJwt: Boolean(jwtInfo),
+    });
+    if (jwtInfo && jwtInfo.ref) {
+      urlSet.add(`https://${jwtInfo.ref.toLowerCase()}.supabase.co`);
+    }
+  };
+
+  const addUrlCandidate = (rawVal) => {
+    const norm = normalizeSupabaseBaseUrl(rawVal);
+    if (norm && !norm.includes("your-project")) {
+      urlSet.add(norm);
+    }
+  };
+
+  for (const k of keyPriorityKeys) {
+    if (env[k]) addKeyCandidate(env[k]);
+  }
+  for (const k of urlPriorityKeys) {
+    if (env[k]) addUrlCandidate(env[k]);
+  }
+
+  // 전체 process.env 스캔: 변수명에 _가 추가되었거나 URL/키가 다른 이름으로 저장된 경우까지 자동 탐지
+  for (const [envName, envVal] of Object.entries(env)) {
+    if (!envVal || typeof envVal !== "string") continue;
+    if (/SERVICE_ROLE/i.test(envName)) continue;
+    if (/SUPABASE/i.test(envName) || envVal.includes(".supabase.co") || envVal.startsWith("eyJ")) {
+      addKeyCandidate(envVal);
+      addUrlCandidate(envVal);
+    }
+  }
+
+  // 검증된 JWT 키를 최우선 정렬
+  keyList.sort((a, b) => Number(b.isVerifiedJwt) - Number(a.isVerifiedJwt));
+
+  const pairs = [];
+  const pairSeen = new Set();
+
+  const pushPair = (url, key) => {
+    if (!url || !key) return;
+    const sig = `${url}|${key}`;
+    if (pairSeen.has(sig)) return;
+    pairSeen.add(sig);
+    pairs.push({ url, key });
+  };
+
+  if (cachedWorkingCreds && cachedWorkingCreds.url && cachedWorkingCreds.key) {
+    pushPair(cachedWorkingCreds.url, cachedWorkingCreds.key);
+  }
+
+  // 1순위: JWT 내부 ref와 정확히 일치하는 URL + Key 조합
+  for (const kObj of keyList) {
+    if (kObj.refUrl) {
+      pushPair(kObj.refUrl, kObj.key);
+    }
+  }
+
+  // 2순위: 수집된 모든 유효 URL + Key 조합
+  for (const kObj of keyList) {
+    for (const u of urlSet) {
+      pushPair(u, kObj.key);
+    }
+  }
+
+  return pairs;
+}
 
 const SYNC_ROW_KEY = "JAPAN_TRAVEL_PLANNER_635";
 
@@ -147,7 +300,7 @@ function verifyAndParseSignedTicket(rawTicket) {
   if (/^[a-f0-9]{32,64}$/i.test(trimmed)) {
     const suffix = trimmed.slice(0, 4).toUpperCase();
     return {
-      id: `inv-legacy-${trimmed.slice(0, 10)}`,
+      id: `inv-legacy-${trimmed.slice(0, 10).toLowerCase()}`,
       code: `JP-${suffix}`,
       ticket: trimmed,
       label: "기존 발송 초대 링크",
@@ -254,19 +407,27 @@ function verifyAdminMasterKey(candidate) {
 function normalizeInviteItem(rawItem, idx = 0) {
   if (!rawItem || typeof rawItem !== "object") return null;
   const createdAt = Number(rawItem.createdAt) || Date.now();
-  const id = cleanString(
-    String(rawItem.id || `inv-${createdAt}-${idx}`),
-    64,
-    `inv-${createdAt}-${idx}`
-  ).replace(/[^a-zA-Z0-9_-]/g, "");
-  const label = cleanString(rawItem.label || `동행인 초대 #${idx + 1}`, 60, `동행인 초대 #${idx + 1}`);
+  const rawTicketStr = typeof rawItem.ticket === "string" ? rawItem.ticket.trim() : "";
+  const defaultId =
+    !rawItem.id && /^[a-f0-9]{32,64}$/i.test(rawTicketStr)
+      ? `inv-legacy-${rawTicketStr.slice(0, 10).toLowerCase()}`
+      : `inv-${createdAt}-${idx}`;
+  const id = cleanString(String(rawItem.id || defaultId), 64, defaultId).replace(
+    /[^a-zA-Z0-9_-]/g,
+    ""
+  );
+  const label = cleanString(
+    rawItem.label || `동행인 초대 #${idx + 1}`,
+    60,
+    `동행인 초대 #${idx + 1}`
+  );
   const rawCode = cleanString(rawItem.code || "", 32, "");
   const code = rawCode
     ? formatReadableInviteCode(rawCode)
-    : `JP-${String(rawItem.ticket || id).slice(0, 4).toUpperCase()}`;
+    : `JP-${String(rawTicketStr || id).slice(0, 4).toUpperCase()}`;
   const ticket =
-    typeof rawItem.ticket === "string" && rawItem.ticket.length >= 16
-      ? rawItem.ticket
+    rawTicketStr.length >= 16
+      ? rawTicketStr
       : createSignedInviteTicket({ id, code, label, createdAt });
 
   return {
@@ -301,13 +462,23 @@ function ensureSecurityConfig(existingObj) {
       : {};
 
   // 1) 삭제(영구 폐기)된 초대 코드 ID/티켓 목록 병합
-  const revokedSet = new Set([
-    ...(Array.isArray(cloudBase.revokedTickets) ? cloudBase.revokedTickets : []),
-    ...(Array.isArray(memBase.revokedTickets) ? memBase.revokedTickets : []),
-  ].filter((x) => typeof x === "string" && x.length > 0));
+  const revokedSet = new Set(
+    [
+      ...(Array.isArray(cloudBase.revokedTickets) ? cloudBase.revokedTickets : []),
+      ...(Array.isArray(memBase.revokedTickets) ? memBase.revokedTickets : []),
+    ].filter((x) => typeof x === "string" && x.length > 0)
+  );
   const revokedTickets = Array.from(revokedSet).slice(0, 200);
 
-  // 2) 접속 허용 비밀번호 목록 병합 (메모리 캐시와 클라우드 중 더 최신 설정 우선 + 커스텀 비번 유실 방지)
+  // 2) 삭제된 비밀번호 ID 목록 병합 및 접속 허용 비밀번호 병합 (콜드스타트 메모리가 클라우드 커스텀 비밀번호를 덮어쓰지 않도록 보호)
+  const deletedPwSet = new Set(
+    [
+      ...(Array.isArray(cloudBase.deletedPasswordIds) ? cloudBase.deletedPasswordIds : []),
+      ...(Array.isArray(memBase.deletedPasswordIds) ? memBase.deletedPasswordIds : []),
+    ].filter((x) => typeof x === "string" && x.length > 0)
+  );
+  const deletedPasswordIds = Array.from(deletedPwSet).slice(0, 200);
+
   const filterValidEntries = (arr) =>
     Array.isArray(arr)
       ? arr.filter(
@@ -316,20 +487,34 @@ function ensureSecurityConfig(existingObj) {
             typeof e === "object" &&
             typeof e.salt === "string" &&
             typeof e.hash === "string" &&
-            e.hash.length === 128
+            e.hash.length === 128 &&
+            !deletedPwSet.has(String(e.id || ""))
         )
       : [];
 
   const cloudEntries = filterValidEntries(cloudBase.accessEntries);
   const memEntries = filterValidEntries(memBase.accessEntries);
 
-  let accessEntries =
-    (Number(memBase.configUpdatedAt) || 0) > (Number(cloudBase.configUpdatedAt) || 0) &&
-    memEntries.length > 0
-      ? memEntries
-      : cloudEntries.length > 0
-      ? cloudEntries
-      : memEntries;
+  const entryMap = new Map();
+  const primaryReplacedAt = Math.max(
+    Number(cloudBase.primaryReplacedAt) || 0,
+    Number(memBase.primaryReplacedAt) || 0
+  );
+
+  // 클라우드와 메모리의 모든 유효 비밀번호를 ID/해시 기준으로 통합 보존
+  const combinedSource =
+    (Number(memBase.configUpdatedAt) || 0) > (Number(cloudBase.configUpdatedAt) || 0)
+      ? [...memEntries, ...cloudEntries]
+      : [...cloudEntries, ...memEntries];
+
+  for (const entry of combinedSource) {
+    const key = String(entry.id || entry.hash);
+    if (!entryMap.has(key)) {
+      entryMap.set(key, entry);
+    }
+  }
+
+  let accessEntries = Array.from(entryMap.values()).slice(0, 15);
 
   if (accessEntries.length === 0) {
     accessEntries = [
@@ -376,26 +561,32 @@ function ensureSecurityConfig(existingObj) {
     }
   }
 
-  // 4) 초대 코드 목록 병합 (클라우드 + 메모리 병합하여 유실 원천 차단, 활성/비활성 상태 최신값 반영)
+  // 4) 초대 코드 목록 병합 (티켓·ID·단축코드 중복 방지 + 활성/비활성 상태 최신값 반영)
   const inviteMap = new Map();
+  const ticketToKey = new Map();
   const rawCloudInvites = Array.isArray(cloudBase.inviteTickets) ? cloudBase.inviteTickets : [];
   const rawMemInvites = Array.isArray(memBase.inviteTickets) ? memBase.inviteTickets : [];
 
   for (const item of [...rawCloudInvites, ...rawMemInvites]) {
     const norm = normalizeInviteItem(item, inviteMap.size);
     if (!norm) continue;
+    const codeNorm = normalizeInviteCode(norm.code);
     if (
       revokedSet.has(norm.id) ||
       revokedSet.has(norm.ticket) ||
-      revokedSet.has(normalizeInviteCode(norm.code))
+      (codeNorm && revokedSet.has(codeNorm))
     ) {
       continue;
     }
-    const key = norm.id || norm.ticket;
+    const existingKeyByTicket = norm.ticket ? ticketToKey.get(norm.ticket) : null;
+    const key = existingKeyByTicket || norm.id || norm.ticket;
+    if (norm.ticket) ticketToKey.set(norm.ticket, key);
+
     const prev = inviteMap.get(key);
     if (!prev || (Number(norm.updatedAt) || 0) >= (Number(prev.updatedAt) || 0)) {
       inviteMap.set(key, {
         ...norm,
+        id: prev?.id || norm.id,
         useCount: Math.max(Number(prev?.useCount) || 0, Number(norm.useCount) || 0),
         lastUsedAt: norm.lastUsedAt || prev?.lastUsedAt || null,
       });
@@ -408,13 +599,14 @@ function ensureSecurityConfig(existingObj) {
 
   const mergedConfig = {
     accessEntries,
+    deletedPasswordIds,
+    primaryReplacedAt,
     ipRecords,
     inviteTickets,
     revokedTickets,
     configUpdatedAt: Math.max(
       Number(cloudBase.configUpdatedAt) || 0,
-      Number(memBase.configUpdatedAt) || 0,
-      Date.now()
+      Number(memBase.configUpdatedAt) || 0
     ),
   };
 
@@ -957,10 +1149,10 @@ function stripSensitiveFieldsForClient(data) {
   };
 }
 
-function getSupabaseHeaders(extra = {}) {
+function getSupabaseHeaders(apiKey, extra = {}) {
   return {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    apikey: apiKey,
+    Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
     ...extra,
   };
@@ -983,114 +1175,154 @@ function tryParseJsonObject(val) {
   return null;
 }
 
-async function fetchFromSupabase() {
-  const endpoint = `${SUPABASE_URL}/rest/v1/couple_calendar?date=eq.${encodeURIComponent(
-    SYNC_ROW_KEY
-  )}&select=*`;
+function extractBestObjectFromRow(row) {
+  if (!row || typeof row !== "object") return null;
+  const fromHaeMemo = tryParseJsonObject(row.hae_memo);
+  const fromHaeShift = tryParseJsonObject(row.hae_shift);
+  const fromMemo = tryParseJsonObject(row.memo);
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6000);
+  const candidates = [fromHaeMemo, fromHaeShift, fromMemo].filter(Boolean);
+  if (candidates.length === 0) return null;
 
-  try {
-    const res = await fetch(endpoint, {
-      method: "GET",
-      headers: getSupabaseHeaders({ "Cache-Control": "no-cache" }),
-      signal: controller.signal,
-    });
+  // 가장 최신 updatedAt을 가진 객체를 기준으로 하되, securityConfig(초대코드·비밀번호)는 병합 보존
+  candidates.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+  const best = { ...candidates[0] };
 
-    if (!res.ok) {
-      throw new Error(`Supabase GET status ${res.status}`);
+  for (const c of candidates) {
+    if (c.securityConfig && typeof c.securityConfig === "object") {
+      best.securityConfig = {
+        ...(best.securityConfig || {}),
+        ...c.securityConfig,
+        inviteTickets: [
+          ...(Array.isArray(best.securityConfig?.inviteTickets)
+            ? best.securityConfig.inviteTickets
+            : []),
+          ...(Array.isArray(c.securityConfig?.inviteTickets)
+            ? c.securityConfig.inviteTickets
+            : []),
+        ],
+        accessEntries: [
+          ...(Array.isArray(best.securityConfig?.accessEntries)
+            ? best.securityConfig.accessEntries
+            : []),
+          ...(Array.isArray(c.securityConfig?.accessEntries)
+            ? c.securityConfig.accessEntries
+            : []),
+        ],
+      };
     }
-
-    const rows = await res.json();
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return null;
-    }
-
-    const row = rows[0];
-    const fromHaeMemo = tryParseJsonObject(row.hae_memo);
-    const fromHaeShift = tryParseJsonObject(row.hae_shift);
-    const fromMemo = tryParseJsonObject(row.memo);
-
-    const candidates = [fromHaeMemo, fromHaeShift, fromMemo].filter(Boolean);
-    if (candidates.length === 0) return null;
-
-    // 가장 최신 updatedAt을 가진 객체를 기준으로 하되, securityConfig(초대코드·비밀번호)는 병합 보존
-    candidates.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
-    const best = { ...candidates[0] };
-
-    for (const c of candidates) {
-      if (c.securityConfig && typeof c.securityConfig === "object") {
-        best.securityConfig = {
-          ...(best.securityConfig || {}),
-          ...c.securityConfig,
-          inviteTickets: [
-            ...(Array.isArray(best.securityConfig?.inviteTickets)
-              ? best.securityConfig.inviteTickets
-              : []),
-            ...(Array.isArray(c.securityConfig?.inviteTickets)
-              ? c.securityConfig.inviteTickets
-              : []),
-          ],
-          accessEntries:
-            Array.isArray(best.securityConfig?.accessEntries) &&
-            best.securityConfig.accessEntries.length > 0
-              ? best.securityConfig.accessEntries
-              : c.securityConfig.accessEntries,
-        };
-      }
-    }
-
-    return best;
-  } finally {
-    clearTimeout(timer);
   }
+
+  return best;
 }
 
-async function saveToSupabase(payload) {
-  const endpoint = `${SUPABASE_URL}/rest/v1/couple_calendar?on_conflict=date`;
-  const jsonStr = JSON.stringify(payload);
+async function fetchFromSupabase() {
+  const credPairs = resolveSupabaseCredentialsList();
+  if (credPairs.length === 0) {
+    throw new Error("No valid Supabase credentials found in environment");
+  }
 
-  const attemptUpsert = async (rowBody) => {
+  let lastErr = null;
+  for (const cred of credPairs) {
+    const endpoint = `${cred.url}/rest/v1/couple_calendar?date=eq.${encodeURIComponent(
+      SYNC_ROW_KEY
+    )}&select=*`;
+
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 4500);
+
     try {
       const res = await fetch(endpoint, {
-        method: "POST",
-        headers: getSupabaseHeaders({
-          Prefer: "resolution=merge-duplicates,return=minimal",
-        }),
-        body: JSON.stringify(rowBody),
+        method: "GET",
+        headers: getSupabaseHeaders(cred.key, { "Cache-Control": "no-cache" }),
         signal: controller.signal,
       });
-      return res.ok;
+
+      if (!res.ok) {
+        lastErr = new Error(`Supabase GET status ${res.status}`);
+        continue;
+      }
+
+      const rows = await res.json();
+      cachedWorkingCreds = cred;
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return null;
+      }
+
+      return extractBestObjectFromRow(rows[0]);
+    } catch (err) {
+      lastErr = err;
     } finally {
       clearTimeout(timer);
     }
-  };
-
-  // 1차: 기존 호환 형식 (hae_shift + hae_memo 동시 기록)
-  const okPrimary = await attemptUpsert({
-    date: SYNC_ROW_KEY,
-    memo: "",
-    hae_shift: payload,
-    hae_memo: jsonStr,
-  }).catch(() => false);
-
-  if (okPrimary) return true;
-
-  // 2차 폴백: hae_shift 컬럼이 TEXT 타입인 경우 객체 전달 시 400 에러가 날 수 있으므로 null + JSON 문자열로 안전 저장
-  const okFallback = await attemptUpsert({
-    date: SYNC_ROW_KEY,
-    memo: jsonStr,
-    hae_shift: null,
-    hae_memo: jsonStr,
-  });
-
-  if (!okFallback) {
-    throw new Error("Supabase UPSERT failed on both primary and fallback schemas");
   }
-  return true;
+
+  throw lastErr || new Error("Supabase GET failed across all credential candidates");
+}
+
+async function saveToSupabase(payload) {
+  const credPairs = resolveSupabaseCredentialsList();
+  if (credPairs.length === 0) {
+    throw new Error("No valid Supabase credentials found in environment");
+  }
+
+  const jsonStr = JSON.stringify(payload);
+  let lastErr = null;
+
+  for (const cred of credPairs) {
+    const endpoint = `${cred.url}/rest/v1/couple_calendar?on_conflict=date`;
+
+    const attemptUpsert = async (rowBody) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: getSupabaseHeaders(cred.key, {
+            Prefer: "resolution=merge-duplicates,return=minimal",
+          }),
+          body: JSON.stringify(rowBody),
+          signal: controller.signal,
+        });
+        return res.ok;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    try {
+      // 1차: 기존 호환 형식 (hae_shift + hae_memo 동시 기록)
+      const okPrimary = await attemptUpsert({
+        date: SYNC_ROW_KEY,
+        memo: "",
+        hae_shift: payload,
+        hae_memo: jsonStr,
+      }).catch(() => false);
+
+      if (okPrimary) {
+        cachedWorkingCreds = cred;
+        return true;
+      }
+
+      // 2차 폴백: hae_shift 컬럼이 TEXT 타입인 경우 객체 전달 시 400 에러가 날 수 있으므로 null + JSON 문자열로 안전 저장
+      const okFallback = await attemptUpsert({
+        date: SYNC_ROW_KEY,
+        memo: jsonStr,
+        hae_shift: null,
+        hae_memo: jsonStr,
+      }).catch(() => false);
+
+      if (okFallback) {
+        cachedWorkingCreds = cred;
+        return true;
+      }
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr || new Error("Supabase UPSERT failed on both primary and fallback schemas");
 }
 
 async function persistSecurityConfigOnly(existingData, securityConfig) {
@@ -1148,14 +1380,6 @@ module.exports = async function handler(req, res) {
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
-  }
-
-  // 🔒 환경변수 검증 (키 노출 없이 명확한 500 에러 반환)
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return res.status(500).json({
-      ok: false,
-      error: "Server configuration missing: SUPABASE_URL / SUPABASE_ANON_KEY",
-    });
   }
 
   const clientIp = getClientIp(req);
@@ -1385,6 +1609,12 @@ module.exports = async function handler(req, res) {
           };
 
           if (action === "adminSetPrimaryPassword") {
+            const oldIds = (securityConfig.accessEntries || [])
+              .map((e) => String(e.id || ""))
+              .filter(Boolean);
+            const delSet = new Set([...(securityConfig.deletedPasswordIds || []), ...oldIds]);
+            securityConfig.deletedPasswordIds = Array.from(delSet).slice(0, 200);
+            securityConfig.primaryReplacedAt = Date.now();
             securityConfig.accessEntries = [newEntry];
           } else {
             securityConfig.accessEntries = [
@@ -1414,6 +1644,8 @@ module.exports = async function handler(req, res) {
             });
           }
           securityConfig.accessEntries = currentList.filter((e) => e.id !== entryId);
+          const delSet = new Set([...(securityConfig.deletedPasswordIds || []), entryId]);
+          securityConfig.deletedPasswordIds = Array.from(delSet).slice(0, 200);
           await persistSecurityConfigOnly(existing, securityConfig);
           return res.status(200).json({
             ok: true,
@@ -1831,27 +2063,44 @@ module.exports = async function handler(req, res) {
         });
       }
 
-      // 만약 Supabase 조회가 일시 실패했고 메모리 캐시도 비어있는 콜드스타트 상태라면 기존 클라우드 유실 방지를 위해 저장 보류
-      if (supabaseFetchFailed && !existing) {
-        return res.status(503).json({
-          ok: false,
-          error: "클라우드 연결이 일시적으로 지연되고 있습니다. 잠시 후 자동으로 다시 동기화됩니다.",
-        });
-      }
-
       // 🛡️ [수정 B] 빈 초기 기기가 기존 클라우드 데이터를 덮어쓰는 현상 방지 & 스마트 데이터 보존
       const incomingPins = Array.isArray(body.pins) ? body.pins : [];
       const incomingDays = Array.isArray(body.days) ? body.days : [];
       const incomingNotes = Array.isArray(body.notes) ? body.notes : [];
       const incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
 
+      const isExplicitReset = Boolean(body.explicitlyCleared);
+      const isForceOverwrite = Boolean(body.forceOverwrite);
+      const incomingHasMeaningful =
+        incomingPins.length > 0 ||
+        hasMeaningfulNotes(incomingNotes) ||
+        hasMeaningfulChecklist(incomingChecklist);
+
+      // 만약 Supabase 조회가 일시 실패했고 메모리 캐시도 비어있는 콜드스타트 상태라면:
+      // 기존 클라우드 덮어쓰기는 막되, 503 에러 대신 메모리 캐시 보존 후 200 응답으로 정상 UX 유지
+      if (supabaseFetchFailed && !existing && !isForceOverwrite) {
+        if (incomingHasMeaningful || isExplicitReset) {
+          const fallbackPayload = sanitizeSyncPayload(body, securityConfig);
+          memoryFallback = fallbackPayload;
+          securityConfigMemory = securityConfig;
+          return res.status(200).json({
+            ok: true,
+            updatedAt: fallbackPayload.updatedAt,
+            storage: "memory-fallback-protected-v4",
+          });
+        }
+        return res.status(200).json({
+          ok: true,
+          skippedEmptyOnColdStart: true,
+          updatedAt: Date.now(),
+          storage: "memory-protected-noop-v4",
+        });
+      }
+
       const existingPins = existing && Array.isArray(existing.pins) ? existing.pins : [];
       const existingDays = existing && Array.isArray(existing.days) ? existing.days : [];
       const existingNotes = existing && Array.isArray(existing.notes) ? existing.notes : [];
       const existingChecklist = existing && Array.isArray(existing.checklist) ? existing.checklist : [];
-
-      const isExplicitReset = Boolean(body.explicitlyCleared);
-      const isForceOverwrite = Boolean(body.forceOverwrite);
 
       if (!isExplicitReset && !isForceOverwrite) {
         // 1) 핀(pins) 방어: 들어오는 핀이 비어 있고 기존에 핀이 있으면 기존 핀 유지
@@ -1889,12 +2138,21 @@ module.exports = async function handler(req, res) {
 
       memoryFallback = sanitizedPayload;
       securityConfigMemory = securityConfig;
-      await saveToSupabase(sanitizedPayload);
+
+      let dbSaved = false;
+      try {
+        dbSaved = await saveToSupabase(sanitizedPayload);
+      } catch {
+        dbSaved = false;
+      }
 
       return res.status(200).json({
         ok: true,
+        dbSynced: dbSaved,
         updatedAt: sanitizedPayload.updatedAt,
-        storage: "supabase-couple-calendar-secured-v4",
+        storage: dbSaved
+          ? "supabase-couple-calendar-secured-v4"
+          : "memory-fallback-secured-v4",
       });
     }
 
