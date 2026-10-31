@@ -180,20 +180,27 @@ function resolveSupabaseCredentialsList() {
 const SYNC_ROW_KEY = "JAPAN_TRAVEL_PLANNER_635";
 
 // 🔐 PBKDF2-HMAC-SHA512 (100,000 iterations) 보안 상수 — 평문 비밀번호는 코드에 일절 저장하지 않음
+// 환경변수(ENTRY_DEFAULT_*, ADMIN_MASTER_*, INVITE_HMAC_SECRET) 우선 로드 지원
 const PBKDF2_ITERATIONS = 100000;
 const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = "sha512";
 
-const DEFAULT_ENTRY_SALT = "JP635_ENTRY_DEFAULT_SALT_v3_99f1a4c8";
+const DEFAULT_ENTRY_SALT =
+  cleanEnvToken(process.env.ENTRY_DEFAULT_SALT) || "JP635_ENTRY_DEFAULT_SALT_v3_99f1a4c8";
 const DEFAULT_ENTRY_PBKDF2_HASH =
+  cleanEnvToken(process.env.ENTRY_DEFAULT_PBKDF2_HASH) ||
   "8e2f0d712822571d7b38aae78443f99b40ca70edbbcc664136d1b7654a2a9cddfa814f418de9f5b767f4e6ff9c0b6cd39623083473489d735ab0d1770ad6d954";
 
-const ADMIN_MASTER_SALT = "JP635_ADMIN_MASTER_SALT_v3_e7b204d1";
+const ADMIN_MASTER_SALT =
+  cleanEnvToken(process.env.ADMIN_MASTER_SALT) || "JP635_ADMIN_MASTER_SALT_v3_e7b204d1";
 const ADMIN_MASTER_PBKDF2_HASH =
+  cleanEnvToken(process.env.ADMIN_MASTER_PBKDF2_HASH) ||
   "b9930fbde86ad79e8c2d8b6c39ed23689c35d7a98a5eab5e21f67ec8e4fc6b28e0e83a8fbdc4fa9e43b5988f940542b04d27cafe5d4c3e45e7664e2daa8260f4";
 
-// 초대 티켓 자체 서명 검증용 파생 시크릿 (서버리스 콜드스타트·동기화 지연 시에도 유효한 초대코드가 만료로 오판되지 않도록 보장)
-const INVITE_HMAC_SECRET = `JP635_INVITE_SIGN_v4_${ADMIN_MASTER_SALT}_${DEFAULT_ENTRY_PBKDF2_HASH.slice(0, 32)}`;
+// 초대 티켓 자체 서명 검증용 파생 시크릿 (환경변수 INVITE_HMAC_SECRET 우선 적용)
+const INVITE_HMAC_SECRET =
+  cleanEnvToken(process.env.INVITE_HMAC_SECRET) ||
+  `JP635_INVITE_SIGN_v4_${ADMIN_MASTER_SALT}_${DEFAULT_ENTRY_PBKDF2_HASH.slice(0, 32)}`;
 
 const MAX_PIN_FAILS = 5;
 // ⏱️ IP 잠금 자동 해제 시간: 10분 (영구 차단 대신 10분 후 자동 해제 + 카운트다운 제공)
@@ -332,13 +339,18 @@ function extractInviteTokenFromInput(rawInput) {
 }
 
 function getClientIp(req) {
-  const xff = req.headers["x-forwarded-for"];
-  if (typeof xff === "string" && xff.length > 0) {
-    return xff.split(",")[0].trim().slice(0, 64);
+  // 🛡️ Vercel 엣지가 주입하는 신뢰 헤더(x-vercel-forwarded-for, x-real-ip)를 최우선 사용하여 클라이언트 X-Forwarded-For 스푸핑 차단
+  const vercelFwd = req.headers["x-vercel-forwarded-for"];
+  if (typeof vercelFwd === "string" && vercelFwd.trim().length > 0) {
+    return vercelFwd.split(",")[0].trim().slice(0, 64);
   }
   const realIp = req.headers["x-real-ip"];
-  if (typeof realIp === "string" && realIp.length > 0) {
+  if (typeof realIp === "string" && realIp.trim().length > 0) {
     return realIp.trim().slice(0, 64);
+  }
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.trim().length > 0) {
+    return xff.split(",")[0].trim().slice(0, 64);
   }
   return (req.socket?.remoteAddress || "unknown").slice(0, 64);
 }
@@ -400,6 +412,12 @@ function verifyAdminMasterKey(candidate) {
   if (typeof candidate !== "string") return false;
   const trimmed = candidate.trim();
   if (!trimmed) return false;
+  const envAdminPlain = cleanEnvToken(process.env.ADMIN_MASTER_PASSWORD);
+  if (envAdminPlain && envAdminPlain.length >= 4) {
+    const envDerived = derivePbkdf2Hex(trimmed, ADMIN_MASTER_SALT);
+    const expectedEnvDerived = derivePbkdf2Hex(envAdminPlain, ADMIN_MASTER_SALT);
+    if (safeTimingEqualHex(envDerived, expectedEnvDerived)) return true;
+  }
   const derived = derivePbkdf2Hex(trimmed, ADMIN_MASTER_SALT);
   return safeTimingEqualHex(derived, ADMIN_MASTER_PBKDF2_HASH);
 }
@@ -654,6 +672,9 @@ function findInviteStatus(rawInput, securityConfig) {
     if (matched.active === false) {
       return { status: "disabled", matched };
     }
+    if (matched.expiresAt && Date.now() > Number(matched.expiresAt)) {
+      return { status: "disabled", matched };
+    }
     return { status: "active", matched };
   }
 
@@ -721,13 +742,30 @@ function verifyAccessPassword(candidate, securityConfig) {
     }
   }
 
-  // 3) 기본 초기 비밀번호 폴백 검증 (비번 설정 혼선 시에도 원래 기본 비밀번호로 입장 가능)
-  const defaultDerived = derivePbkdf2Hex(trimmed, DEFAULT_ENTRY_SALT);
-  if (safeTimingEqualHex(defaultDerived, DEFAULT_ENTRY_PBKDF2_HASH)) {
-    return true;
+  // 3) 환경변수 ENTRY_DEFAULT_PASSWORD가 명시 설정된 경우 검증
+  const envEntryPlain = cleanEnvToken(process.env.ENTRY_DEFAULT_PASSWORD);
+  if (envEntryPlain && envEntryPlain.length >= 4) {
+    const envDerived = derivePbkdf2Hex(trimmed, DEFAULT_ENTRY_SALT);
+    const expectedEnvDerived = derivePbkdf2Hex(envEntryPlain, DEFAULT_ENTRY_SALT);
+    if (safeTimingEqualHex(envDerived, expectedEnvDerived)) {
+      return true;
+    }
   }
 
-  // 4) 관리자 마스터 비밀번호로도 입장 허용
+  // 4) 초기 부트스트랩 비밀번호 검증 (관리자가 새 단독 비밀번호를 설정했거나 커스텀 비밀번호가 등록된 후에는 공개 기본값 비활성화)
+  const hasCustomPasswordConfigured =
+    (Number(securityConfig?.primaryReplacedAt) || 0) > 0 ||
+    entries.some((e) => e && e.id && e.id !== "default-entry-key");
+  const hasExplicitEnvEntryHash = Boolean(cleanEnvToken(process.env.ENTRY_DEFAULT_PBKDF2_HASH));
+
+  if (!hasCustomPasswordConfigured || hasExplicitEnvEntryHash) {
+    const defaultDerived = derivePbkdf2Hex(trimmed, DEFAULT_ENTRY_SALT);
+    if (safeTimingEqualHex(defaultDerived, DEFAULT_ENTRY_PBKDF2_HASH)) {
+      return true;
+    }
+  }
+
+  // 5) 관리자 마스터 비밀번호로도 입장 허용
   if (verifyAdminMasterKey(trimmed)) {
     return true;
   }
@@ -1115,6 +1153,15 @@ function sanitizeSyncPayload(raw, securityConfig) {
       label: cleanString(d.label, 40, `Day ${idx + 1}`),
     }));
 
+  const rawClientId = cleanString(raw.clientId, 64, "unknown").replace(/[^a-zA-Z0-9_-]/g, "");
+  const safeClientId = /^device-[a-z0-9]{4,16}-\d{10,15}$/i.test(rawClientId)
+    ? rawClientId
+    : `srv-${rawClientId.slice(0, 24) || "anon"}`;
+
+  // 🛡️ 서버 기준 타임스탬프 강제 (클라이언트가 미래 시각 updatedAt을 조작하여 LWW를 영구 선점하는 공격 차단)
+  const serverNow = Date.now();
+  const safeUpdatedAt = Math.min(clampNumber(raw.updatedAt, 0, serverNow, serverNow), serverNow);
+
   return {
     pins,
     days: days.length > 0 ? days : [{ id: "day-1", label: "Day 1" }],
@@ -1125,8 +1172,8 @@ function sanitizeSyncPayload(raw, securityConfig) {
     checklist,
     explicitlyCleared: Boolean(raw.explicitlyCleared),
     forceOverwrite: Boolean(raw.forceOverwrite),
-    updatedAt: clampNumber(raw.updatedAt, 0, Date.now() + 60000, Date.now()),
-    clientId: cleanString(raw.clientId, 64, "unknown").replace(/[^a-zA-Z0-9_-]/g, ""),
+    updatedAt: safeUpdatedAt,
+    clientId: safeClientId,
     securityConfig,
   };
 }
@@ -1387,6 +1434,17 @@ module.exports = async function handler(req, res) {
     return res.status(429).json({
       ok: false,
       error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+    });
+  }
+
+  // 🛡️ 서버 환경변수 검증: SUPABASE_URL / SUPABASE_ANON_KEY 미설정 시 키 노출 없이 즉시 HTTP 500 반환
+  if (
+    resolveSupabaseCredentialsList().length === 0 &&
+    process.env.ALLOW_MEMORY_ONLY_DEV !== "true"
+  ) {
+    return res.status(500).json({
+      ok: false,
+      error: "Server configuration missing: SUPABASE_URL / SUPABASE_ANON_KEY",
     });
   }
 

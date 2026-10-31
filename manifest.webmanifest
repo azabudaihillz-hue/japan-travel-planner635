@@ -1,19 +1,25 @@
 {
-  "id": "travel-planner-635",
-  "name": "여행 플래너",
-  "short_name": "여행플래너",
-  "description": "동행인과 함께 실시간으로 공유하는 스마트 여행 일정 및 예산 보드",
+  "id": "/?app=travel-planner-635",
+  "name": "여행 플래너 635",
+  "short_name": "여행635",
+  "description": "스마트 여행 코스 · 지도 · 예산 · 메모 플래너",
   "start_url": "/?app=travel-planner-635",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait-primary",
-  "background_color": "#f5f6f8",
-  "theme_color": "#4f46e5",
+  "orientation": "portrait",
+  "background_color": "#EFF2F7",
+  "theme_color": "#EFF2F7",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

@@ -66,6 +66,36 @@ function checkRateLimit(ip) {
 }
 
 /**
+ * 🛡️ 사설 IP / 루프백 / 링크-로컬(AWS·GCP 메타데이터 169.254.169.254 포함) 호스트 차단
+ */
+function isPrivateOrReservedHost(hostname) {
+  if (!hostname || typeof hostname !== "string") return true;
+  const h = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h || h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) {
+    return true;
+  }
+  // IPv6 loopback / link-local / unique-local
+  if (h === "::1" || h === "::" || h.startsWith("fe80:") || h.startsWith("fc00:") || h.startsWith("fd00:")) {
+    return true;
+  }
+  // IPv4 literal check
+  const ipv4Match = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [, a, b, c, d] = ipv4Match.map(Number);
+    if ([a, b, c, d].some((n) => n < 0 || n > 255)) return true;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true; // Cloud metadata IP
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    return true; // Google Maps 도메인은 IP 리터럴로 요청하지 않으므로 모든 IP 리터럴 차단
+  }
+  // 숫자로만 구성된 비표준 IP 표기(decimal/octal/hex IP) 차단
+  if (/^(?:0x[0-9a-f]+|\d+)$/i.test(h)) return true;
+  return false;
+}
+
+/**
  * 🛡️ SSRF 방지: 오직 공식 Google Maps / goo.gl 단축 URL 도메인만 허용
  */
 function isAllowedGoogleMapsUrl(urlStr) {
@@ -76,6 +106,7 @@ function isAllowedGoogleMapsUrl(urlStr) {
     if (parsed.username || parsed.password) return false;
     if (parsed.port && parsed.port !== "80" && parsed.port !== "443") return false;
     const host = parsed.hostname.toLowerCase();
+    if (isPrivateOrReservedHost(host)) return false;
     if (ALLOWED_GOOGLE_HOSTS.has(host)) return true;
     if (/^(?:www\.|maps\.|consent\.)?google\.(?:com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2})$/i.test(host)) {
       return true;
