@@ -1083,6 +1083,11 @@ function sanitizeSyncPayload(raw, securityConfig) {
         done: Boolean(t.done),
       }));
 
+    const rawTags = Array.isArray(p.tags) ? p.tags.slice(0, 10) : [];
+    const tags = rawTags
+      .map((t) => cleanString(String(t || ""), 24, "").toLowerCase())
+      .filter(Boolean);
+
     pins.push({
       id: cleanString(String(p.id || `pin-${Date.now()}`), 64, `pin-${Date.now()}`).replace(
         /[^a-zA-Z0-9_-]/g,
@@ -1095,6 +1100,7 @@ function sanitizeSyncPayload(raw, securityConfig) {
       ),
       dayLabel: cleanString(p.dayLabel, 40, "Day 1"),
       localTodos,
+      tags,
       name: typeof p.name === "string" ? cleanString(p.name, 120, "") : cleanString(p.name, 120, "여행 장소"),
       category: cleanString(p.category, 40, "📸 명소·포토존"),
       address: cleanString(p.address, 300, ""),

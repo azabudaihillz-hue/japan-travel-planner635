@@ -831,8 +831,9 @@
     .theme-light .text-indigo-300 { color: #4F46E5 !important; }
     .theme-light .keep-white { color: #FFFFFF !important; }
 
-    /* Map pins & leaflet */
+    /* Map pins, clusters, hotel/airport badges & long-press drag */
     .custom-pin {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -842,15 +843,96 @@
       transform: rotate(-45deg);
       box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
       border: 2.5px solid #FFFFFF;
-      transition: transform 0.2s ease;
-      cursor: grab;
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
-    .custom-pin:active { cursor: grabbing; }
-    .custom-pin span {
+    .custom-pin.pin-hotel {
+      border-color: #FDE047;
+      box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.45), 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+    .custom-pin.pin-airport {
+      border-color: #7DD3FC;
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.45), 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+    .custom-pin.pin-longpress-active {
+      transform: rotate(-45deg) scale(1.34) !important;
+      border-color: #FFFFFF !important;
+      box-shadow:
+        0 0 0 6px rgba(79, 70, 229, 0.38),
+        0 14px 30px rgba(15, 23, 42, 0.45) !important;
+      cursor: grabbing !important;
+      z-index: 9999 !important;
+    }
+    .custom-pin .pin-main-num {
       transform: rotate(45deg);
       font-weight: 900;
       font-size: 13px;
       color: #FFFFFF !important;
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+    /* 우측 상단 클러스터 개수 배지 (N >= 2) */
+    .pin-cluster-badge {
+      position: absolute;
+      top: -9px;
+      right: -11px;
+      transform: rotate(45deg);
+      min-width: 21px;
+      height: 21px;
+      padding: 0 5px;
+      border-radius: 9999px;
+      background: #0F172A;
+      color: #FFFFFF !important;
+      font-size: 11px;
+      font-weight: 900;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid #FFFFFF;
+      box-shadow: 0 3px 10px rgba(15, 23, 42, 0.45);
+      z-index: 6;
+      pointer-events: none;
+    }
+    /* 숙소/공항 좌측 상단 미니 구분 아이콘 */
+    .pin-facility-badge {
+      position: absolute;
+      bottom: -7px;
+      left: -9px;
+      transform: rotate(45deg);
+      width: 19px;
+      height: 19px;
+      border-radius: 9999px;
+      background: #FFFFFF;
+      color: #0F172A;
+      font-size: 10.5px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid rgba(15, 23, 42, 0.18);
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.22);
+      z-index: 5;
+      pointer-events: none;
+    }
+    /* 롱프레스 드래그 활성 상태 안내 라벨 */
+    .pin-drag-ready-label {
+      position: absolute;
+      top: -32px;
+      left: -24px;
+      transform: rotate(45deg);
+      background: #0F172A;
+      color: #FFFFFF !important;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      pointer-events: none;
+      z-index: 10;
     }
     .traveler-avatar {
       display: flex;
@@ -907,6 +989,109 @@
     const CLIENT_ID = "device-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now();
     const CSRF_HEADER_VALUE = "SmartTravelPlanner-v2";
 
+    // 🗺️ 지도 클러스터 · Day 색상 팔레트 · 롱프레스 핀 이동 상수
+    const CLUSTER_DISTANCE_PX = 44; // 화면 기준 핀 중심점 사이 거리 N픽셀 이내 클러스터링 (조절 가능 상수)
+    const CLUSTER_DISABLE_ZOOM = 15; // 줌 레벨 >= 15 이면 클러스터 해제 후 실제 위치(또는 spiderfy) 표시
+    const CLUSTER_DEBOUNCE_MS = 160; // zoom/bounds 변경 시 120~200ms 디바운스 재클러스터
+    const PIN_LONG_PRESS_MS = 450; // 지도 핀 롱프레스 드래그 진입 시간 (400~500ms)
+    const PIN_SPIDERFY_PX = 20; // 고배율(줌 >= 15)에서 좌표가 거의 겹치는 핀 방사형 분리 기준 픽셀
+
+    const DAY_COLOR_PALETTE = [
+      {
+        solid: "#2563EB",
+        line: "#3B82F6",
+        gradient: "linear-gradient(135deg, #2563EB, #4F46E5)",
+        badgeBg: "#DBEAFE",
+        badgeText: "#1D4ED8",
+        border: "#93C5FD"
+      },
+      {
+        solid: "#059669",
+        line: "#10B981",
+        gradient: "linear-gradient(135deg, #059669, #0D9488)",
+        badgeBg: "#D1FAE5",
+        badgeText: "#047857",
+        border: "#6EE7B7"
+      },
+      {
+        solid: "#D97706",
+        line: "#F59E0B",
+        gradient: "linear-gradient(135deg, #D97706, #EA580C)",
+        badgeBg: "#FEF3C7",
+        badgeText: "#B45309",
+        border: "#FCD34D"
+      },
+      {
+        solid: "#7C3AED",
+        line: "#8B5CF6",
+        gradient: "linear-gradient(135deg, #7C3AED, #9333EA)",
+        badgeBg: "#EDE9FE",
+        badgeText: "#6D28D9",
+        border: "#C4B5FD"
+      },
+      {
+        solid: "#E11D48",
+        line: "#F43F5E",
+        gradient: "linear-gradient(135deg, #E11D48, #DB2777)",
+        badgeBg: "#FFE4E6",
+        badgeText: "#BE123C",
+        border: "#FDA4AF"
+      },
+      {
+        solid: "#0891B2",
+        line: "#06B6D4",
+        gradient: "linear-gradient(135deg, #0891B2, #0284C7)",
+        badgeBg: "#CFFAFE",
+        badgeText: "#0E7490",
+        border: "#67E8F9"
+      }
+    ];
+
+    function getDayColorInfo(dayId = "day-1", dayOptionsList = []) {
+      const idxInList = Array.isArray(dayOptionsList)
+        ? dayOptionsList.findIndex((d) => d && d.id === dayId)
+        : -1;
+      if (idxInList >= 0) {
+        return DAY_COLOR_PALETTE[idxInList % DAY_COLOR_PALETTE.length];
+      }
+      const numMatch = String(dayId || "day-1").match(/(\d+)/);
+      const dayNum = numMatch ? Math.max(1, parseInt(numMatch[1], 10)) : 1;
+      return DAY_COLOR_PALETTE[(dayNum - 1) % DAY_COLOR_PALETTE.length];
+    }
+
+    function inferFacilityTags(name = "", category = "", rawTags = []) {
+      const tagSet = new Set(
+        Array.isArray(rawTags)
+          ? rawTags.map((t) => cleanSafeText(String(t || ""), 24, "").toLowerCase()).filter(Boolean)
+          : []
+      );
+      const text = `${name} ${category}`.toLowerCase();
+      if (
+        category.includes("숙소") ||
+        category.includes("호텔") ||
+        /호텔|숙소|료칸|호스텔|리조트|게스트하우스|민박|에어비앤비|아마넥|칸데오|도미인|토요코인|아파호텔|hotel|inn|resort|hostel|ryokan/.test(
+          text
+        )
+      ) {
+        tagSet.add("hotel");
+      }
+      if (
+        category.includes("공항") ||
+        /공항|국제공항|간사이공항|나리타|하네다|후쿠오카공항|신치토세|airport|터미널/.test(text)
+      ) {
+        tagSet.add("airport");
+      }
+      return Array.from(tagSet);
+    }
+
+    function getFacilityType(pin) {
+      if (!pin) return "place";
+      const tags = inferFacilityTags(pin.name, pin.category, pin.tags);
+      if (tags.includes("hotel")) return "hotel";
+      if (tags.includes("airport")) return "airport";
+      return "place";
+    }
+
     // 🛡️ XSS(교차 사이트 스크립팅) 방어를 위한 HTML 이스케이프 함수 (지도 팝업/툴팁 보호)
     function escapeHtml(raw) {
       if (raw === null || raw === undefined) return "";
@@ -952,6 +1137,12 @@
               }))
           : [];
 
+        const cleanName =
+          typeof p.name === "string"
+            ? cleanSafeText(p.name, 120, "")
+            : cleanSafeText(p.name, 120, "여행 장소");
+        const cleanCategory = cleanSafeText(p.category, 40, "📸 명소·포토존");
+
         safePins.push({
           id: cleanSafeText(String(p.id || `pin-${Date.now()}`), 64, `pin-${Date.now()}`).replace(
             /[^a-zA-Z0-9_-]/g,
@@ -962,6 +1153,7 @@
             ""
           ),
           dayLabel: cleanSafeText(p.dayLabel, 40, "Day 1"),
+          tags: inferFacilityTags(cleanName, cleanCategory, p.tags),
           localTodos: Array.isArray(p.localTodos)
             ? p.localTodos
                 .slice(0, 50)
@@ -975,8 +1167,8 @@
                   done: Boolean(t.done)
                 }))
             : [],
-          name: typeof p.name === "string" ? cleanSafeText(p.name, 120, "") : cleanSafeText(p.name, 120, "여행 장소"),
-          category: cleanSafeText(p.category, 40, "📸 명소·포토존"),
+          name: cleanName,
+          category: cleanCategory,
           address: cleanSafeText(p.address, 300, ""),
           lat,
           lng,
@@ -1587,6 +1779,223 @@
         });
       }, [pins, courseFilter, selectedDayId]);
 
+      // 👁️ 특정 Day 선택 시 다른 Day 흐리게 보기 토글 (기본값 false = 해당 Day만 표시)
+      const [showFadedOtherDays, setShowFadedOtherDays] = useState(false);
+      // 🔍 지도 줌/이동 디바운스 재클러스터링 틱
+      const [mapViewportTick, setMapViewportTick] = useState(0);
+      const clusterDebounceTimerRef = useRef(null);
+      // 📌 핀 Long-press 이동 후 드롭 확인 모달 상태
+      const [pinMoveConfirmModal, setPinMoveConfirmModal] = useState({
+        isOpen: false,
+        pinId: "",
+        pinName: "",
+        prevLat: 0,
+        prevLng: 0,
+        nextLat: 0,
+        nextLng: 0
+      });
+      // 🏨/✈️ Day 시작/종료 빠른 설정 셀렉트 상태
+      const [quickStartFacilityKey, setQuickStartFacilityKey] = useState("");
+      const [quickEndFacilityKey, setQuickEndFacilityKey] = useState("");
+
+      // 🔢 각 핀의 전체 순번(globalOrder), Day 내부 순번(dayOrder 1,2,3...), 현재 모드 표시 순번(displayOrder), 시설 타입 계산
+      const pinOrderInfoMap = useMemo(() => {
+        const map = new Map();
+        const dayCounters = {};
+        pins.forEach((p, idx) => {
+          const dId = p.dayId || "day-1";
+          dayCounters[dId] = (dayCounters[dId] || 0) + 1;
+          const globalOrder = idx + 1;
+          const dayOrder = dayCounters[dId];
+          const displayOrder = selectedDayId === "all" ? globalOrder : dayOrder;
+          const dayColor = getDayColorInfo(dId, dayOptions);
+          const facilityType = getFacilityType(p);
+          map.set(p.id, {
+            globalOrder,
+            dayOrder,
+            displayOrder,
+            dayId: dId,
+            dayColor,
+            facilityType
+          });
+        });
+        return map;
+      }, [pins, selectedDayId, dayOptions]);
+
+      // 🏨/✈️ 숙소/공항 풀 (등록된 모든 숙소·공항 전체 목록 — 최초 1개만 보이면 안 됨, 복수 모두 유지)
+      const hotelAirportPool = useMemo(() => {
+        const pool = [];
+        pins.forEach((p) => {
+          const fType = getFacilityType(p);
+          if (!fType) return;
+          const normName = String(p.name || "").trim();
+          if (!normName) return;
+          // 같은 이름 + 같은 좌표(0.0002도 이내)인 동일 장소가 여러 Day에 중복 삽입된 경우에만 풀 항목을 합침
+          const existing = pool.find(
+            (item) =>
+              item.facilityType === fType &&
+              item.name === normName &&
+              Math.abs(item.lat - Number(p.lat)) < 0.0002 &&
+              Math.abs(item.lng - Number(p.lng)) < 0.0002
+          );
+          if (existing) {
+            existing.usedCount += 1;
+            if (!existing.dayLabels.includes(p.dayLabel || "Day 1")) {
+              existing.dayLabels.push(p.dayLabel || "Day 1");
+            }
+          } else {
+            const key = `${fType}::${normName}::${Number(p.lat).toFixed(5)}::${Number(p.lng).toFixed(5)}`;
+            pool.push({
+              key,
+              sourcePinId: p.id,
+              name: normName,
+              category: p.category || (fType === "airport" ? "✈️ 공항/교통" : "🏨 숙소/호텔"),
+              tags: Array.from(new Set([...(Array.isArray(p.tags) ? p.tags : []), fType])),
+              address: p.address || "",
+              lat: Number(p.lat),
+              lng: Number(p.lng),
+              spendInfo: p.spendInfo || estimateGoogleAvgSpend(normName, p.category),
+              facilityType: fType,
+              usedCount: 1,
+              dayLabels: [p.dayLabel || "Day 1"]
+            });
+          }
+        });
+        return pool;
+      }, [pins]);
+
+      // 선택된 숙소/공항 풀 기본값 동기화
+      useEffect(() => {
+        if (hotelAirportPool.length === 0) {
+          if (quickStartFacilityKey) setQuickStartFacilityKey("");
+          if (quickEndFacilityKey) setQuickEndFacilityKey("");
+          return;
+        }
+        if (!quickStartFacilityKey || !hotelAirportPool.some((f) => f.key === quickStartFacilityKey)) {
+          setQuickStartFacilityKey(hotelAirportPool[0].key);
+        }
+        if (!quickEndFacilityKey || !hotelAirportPool.some((f) => f.key === quickEndFacilityKey)) {
+          setQuickEndFacilityKey(hotelAirportPool[0].key);
+        }
+      }, [hotelAirportPool, quickStartFacilityKey, quickEndFacilityKey]);
+
+      // 특정 Day의 맨 앞(start) 또는 맨 뒤(end)에 숙소/공항 핀을 삽입하는 순수 헬퍼 (중복 허용)
+      const insertPinIntoDayBoundary = (pinList, newPinObj, targetDayId, position) => {
+        const result = [...pinList];
+        if (position === "start") {
+          const firstIdx = result.findIndex((p) => (p.dayId || "day-1") === targetDayId);
+          if (firstIdx !== -1) {
+            result.splice(firstIdx, 0, newPinObj);
+            return result;
+          }
+        } else if (position === "end") {
+          let lastIdx = -1;
+          for (let i = result.length - 1; i >= 0; i--) {
+            if ((result[i].dayId || "day-1") === targetDayId) {
+              lastIdx = i;
+              break;
+            }
+          }
+          if (lastIdx !== -1) {
+            result.splice(lastIdx + 1, 0, newPinObj);
+            return result;
+          }
+        }
+        // 해당 Day에 아직 핀이 하나도 없는 경우: dayOptions 순서에 맞춰 삽입
+        const targetDayOrderIdx = dayOptions.findIndex((d) => d.id === targetDayId);
+        if (targetDayOrderIdx !== -1) {
+          for (let i = result.length - 1; i >= 0; i--) {
+            const pDayIdx = dayOptions.findIndex((d) => d.id === (result[i].dayId || "day-1"));
+            if (pDayIdx !== -1 && pDayIdx <= targetDayOrderIdx) {
+              result.splice(i + 1, 0, newPinObj);
+              return result;
+            }
+          }
+          if (targetDayOrderIdx === 0) {
+            result.unshift(newPinObj);
+            return result;
+          }
+        }
+        result.push(newPinObj);
+        return result;
+      };
+
+      // 🏨/✈️ Day 시작/종료 빠른 지정 & 일괄 적용 핸들러
+      const handleApplyDayFacilityBoundary = async (
+        facilityKey,
+        position = "start",
+        scope = "current"
+      ) => {
+        const facility = hotelAirportPool.find((f) => f.key === facilityKey);
+        if (!facility) {
+          showToast("⚠️ 먼저 숙소 또는 공항 장소를 선택해주세요.");
+          return;
+        }
+
+        const activeDayId =
+          selectedDayId !== "all"
+            ? selectedDayId
+            : lastSelectedDayIdRef.current || dayOptions[0]?.id || "day-1";
+
+        let targetDays = [];
+        if (scope === "all") {
+          targetDays = [...dayOptions];
+        } else if (scope === "subsequent") {
+          const startIdx = Math.max(
+            0,
+            dayOptions.findIndex((d) => d.id === activeDayId)
+          );
+          targetDays = dayOptions.slice(startIdx);
+        } else {
+          const found = dayOptions.find((d) => d.id === activeDayId) || {
+            id: activeDayId,
+            label: "Day 1"
+          };
+          targetDays = [found];
+        }
+
+        if (targetDays.length === 0) return;
+
+        const prevSnapshot = [...pins];
+        let nextPins = [...pins];
+        const baseTs = Date.now();
+
+        targetDays.forEach((d, idx) => {
+          const newPin = {
+            id: `pin-${baseTs}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+            name: facility.name,
+            category: facility.category,
+            tags: facility.tags,
+            address: facility.address,
+            lat: Number(facility.lat),
+            lng: Number(facility.lng),
+            completed: false,
+            memo: position === "start" ? "🌅 Day 출발 거점" : "🏁 Day 도착/숙박 거점",
+            customTransitMinutes: null,
+            spendInfo: { avgYen: 0, label: "거점 이동 (추가 지출 없음)" },
+            items: [],
+            dayId: d.id,
+            dayLabel: d.label,
+            localTodos: []
+          };
+          nextPins = insertPinIntoDayBoundary(nextPins, newPin, d.id, position);
+        });
+
+        const posLabel = position === "start" ? "시작(출발)" : "종료(도착)";
+        const scopeLabel =
+          scope === "all"
+            ? `전체 Day (${targetDays.length}일)`
+            : scope === "subsequent"
+            ? `${targetDays[0].label}~${targetDays[targetDays.length - 1].label} (${targetDays.length}일)`
+            : targetDays[0].label;
+
+        await commitPinsWithRollback(
+          nextPins,
+          prevSnapshot,
+          `${facility.facilityType === "airport" ? "✈️" : "🏨"} '${facility.name}'을(를) ${scopeLabel} ${posLabel} 위치로 배치했습니다!`
+        );
+      };
+
       // D. Day 추가 및 삭제 핸들러
       const handleAddDay = () => {
         const nums = dayOptions
@@ -1697,27 +2106,14 @@
 
       const reorderPinsById = (fromId, toId) => {
         if (!fromId || !toId || String(fromId) === String(toId)) return;
-        setSyncStatus("local_saved");
-        setPins((prev) => {
-          const next = [...prev];
-          const fromIdx = next.findIndex((p) => String(p.id) === String(fromId));
-          const toIdx = next.findIndex((p) => String(p.id) === String(toId));
-          if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return prev;
-          const [moved] = next.splice(fromIdx, 1);
-          next.splice(toIdx, 0, moved);
-          try {
-            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(next));
-          } catch {}
-          pushCloudData(
-            {
-              ...latestStateRef.current,
-              pins: next
-            },
-            false
-          );
-          return next;
-        });
-        showToast("🔄 코스 순서가 변경되었습니다!");
+        const prevSnapshot = [...pins];
+        const next = [...pins];
+        const fromIdx = next.findIndex((p) => String(p.id) === String(fromId));
+        const toIdx = next.findIndex((p) => String(p.id) === String(toId));
+        if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+        const [moved] = next.splice(fromIdx, 1);
+        next.splice(toIdx, 0, moved);
+        commitPinsWithRollback(next, prevSnapshot, "🔄 코스 순서가 변경되었습니다!");
       };
 
       const finishPointerDrag = () => {
@@ -2552,7 +2948,7 @@
           noteSaveTimerRef.current = setTimeout(() => {
             setNoteSaveStatus("idle");
           }, 4500);
-          return;
+          return false;
         }
 
         const reqSeq = ++pushSeqRef.current;
@@ -2589,7 +2985,7 @@
               setSyncStatus("synced");
               setNoteSaveStatus("idle");
             }
-            return;
+            return true;
           }
 
           setSyncStatus("saving");
@@ -2633,7 +3029,7 @@
             }
           }
 
-          if (reqSeq !== pushSeqRef.current) return;
+          if (reqSeq !== pushSeqRef.current) return true;
 
           if (res.status === 401 || res.status === 403) {
             setSyncStatus("offline");
@@ -2657,7 +3053,7 @@
                 errJson.error || "인증이 만료되었거나 초대 코드가 비활성화되었습니다."
               );
             }
-            return;
+            return false;
           }
 
           if (res.ok) {
@@ -2676,6 +3072,7 @@
             if (isForce) {
               showToast("☁️ 현재 기기의 일정을 클라우드에 강제 동기화했습니다!");
             }
+            return true;
           } else {
             setSyncStatus("offline");
             clearNoteSaveTimer();
@@ -2683,19 +3080,57 @@
             noteSaveTimerRef.current = setTimeout(() => {
               setNoteSaveStatus("idle");
             }, 4500);
+            return false;
           }
         } catch (e) {
-          if (reqSeq !== pushSeqRef.current) return;
-          if (e && e.name === "AbortError") return;
+          if (reqSeq !== pushSeqRef.current) return true;
+          if (e && e.name === "AbortError") return false;
           setSyncStatus("offline");
           clearNoteSaveTimer();
           setNoteSaveStatus("error");
           noteSaveTimerRef.current = setTimeout(() => {
             setNoteSaveStatus("idle");
           }, 4500);
+          return false;
         } finally {
           clearTimeout(timeoutId);
         }
+      };
+
+      // 🛡️ 단일 소스 오브 트루스(pins) 낙관적 업데이트 + 클라우드 저장 실패 시 자동 롤백 헬퍼
+      const commitPinsWithRollback = async (nextPins, prevPinsSnapshot, successToastMsg) => {
+        const sanitizedNext = sanitizePinList(nextPins);
+        const backupPins = Array.isArray(prevPinsSnapshot)
+          ? prevPinsSnapshot
+          : latestStateRef.current.pins;
+
+        setSyncStatus("local_saved");
+        setPins(sanitizedNext);
+        try {
+          localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(sanitizedNext));
+        } catch {}
+
+        if (successToastMsg) {
+          showToast(successToastMsg);
+        }
+
+        const ok = await pushCloudData(
+          {
+            ...latestStateRef.current,
+            pins: sanitizedNext
+          },
+          false
+        );
+
+        if (ok === false) {
+          setPins(backupPins);
+          try {
+            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(backupPins));
+          } catch {}
+          showToast("⚠️ 클라우드 저장에 실패하여 변경 전 상태로 되돌렸습니다.");
+          return false;
+        }
+        return true;
       };
 
       // 🔄 IP 일시 잠금 해제 여부 즉시 확인 핸들러
@@ -3515,7 +3950,7 @@
         };
       }, [pins, peopleCount, exchangeRate, budgetSummary]);
 
-      // 🌍 구글 한국어 지도 타일 초기화 (시작 페이지 인증 완료 시 즉시 마운트)
+      // 🌍 구글 한국어 지도 타일 초기화 (시작 페이지 인증 완료 시 즉시 마운트 + 줌/이동 디바운스 재클러스터링 연결)
       useEffect(() => {
         if (!isEntryAuthenticated) {
           if (mapInstanceRef.current) {
@@ -3539,8 +3974,107 @@
         }).addTo(map);
 
         L.control.zoom({ position: "bottomleft" }).addTo(map);
+
+        const handleViewportChange = () => {
+          if (clusterDebounceTimerRef.current) {
+            clearTimeout(clusterDebounceTimerRef.current);
+          }
+          clusterDebounceTimerRef.current = setTimeout(() => {
+            setMapViewportTick((t) => t + 1);
+          }, CLUSTER_DEBOUNCE_MS);
+        };
+
+        map.on("zoomend moveend", handleViewportChange);
         mapInstanceRef.current = map;
+
+        return () => {
+          if (clusterDebounceTimerRef.current) {
+            clearTimeout(clusterDebounceTimerRef.current);
+          }
+          try {
+            map.off("zoomend moveend", handleViewportChange);
+          } catch (e) {}
+        };
       }, [isEntryAuthenticated]);
+
+      // 🔒 핀 위치 이동 확인 모달이 떠 있는 동안 배경 지도 제스처 비활성화 (모바일 오작동 방지)
+      useEffect(() => {
+        const map = mapInstanceRef.current;
+        if (!map) return;
+        try {
+          if (pinMoveConfirmModal.isOpen) {
+            map.dragging?.disable();
+            map.touchZoom?.disable();
+            map.scrollWheelZoom?.disable();
+            map.doubleClickZoom?.disable();
+          } else {
+            map.dragging?.enable();
+            map.touchZoom?.enable();
+            map.scrollWheelZoom?.enable();
+            map.doubleClickZoom?.enable();
+          }
+        } catch (e) {}
+      }, [pinMoveConfirmModal.isOpen]);
+
+      // 📌 핀 드롭 확인 모달 — [예: 위치 확정 저장 + 클라우드 동기화 / 실패 시 롤백]
+      const handleConfirmPinMove = async () => {
+        const { pinId, pinName, prevLat, prevLng, nextLat, nextLng } = pinMoveConfirmModal;
+        setPinMoveConfirmModal({
+          isOpen: false,
+          pinId: "",
+          pinName: "",
+          prevLat: 0,
+          prevLng: 0,
+          nextLat: 0,
+          nextLng: 0
+        });
+        if (!pinId) return;
+
+        const prevSnapshot = pins.map((p) =>
+          p.id === pinId ? { ...p, lat: Number(prevLat), lng: Number(prevLng) } : p
+        );
+        const nextPins = pins.map((p) =>
+          p.id === pinId ? { ...p, lat: Number(nextLat), lng: Number(nextLng) } : p
+        );
+        setSelectedPinId(pinId);
+        await commitPinsWithRollback(
+          nextPins,
+          prevSnapshot,
+          `📍 '${pinName}' 위치가 확정되어 클라우드에 동기화되었습니다!`
+        );
+      };
+
+      // 📌 핀 드롭 확인 모달 — [아니오: 드래그 시작 전 좌표로 즉시 원복]
+      const handleCancelPinMove = () => {
+        const { pinName } = pinMoveConfirmModal;
+        setPinMoveConfirmModal({
+          isOpen: false,
+          pinId: "",
+          pinName: "",
+          prevLat: 0,
+          prevLng: 0,
+          nextLat: 0,
+          nextLng: 0
+        });
+        setMapViewportTick((t) => t + 1);
+        showToast(`↩️ '${pinName || "핀"}' 이동을 취소하고 원래 위치로 되돌렸습니다.`);
+      };
+
+      // 📅 Day 모드 전환 시 해당 Day 핀 영역으로 부드럽게 시야(bounds) 이동
+      useEffect(() => {
+        const map = mapInstanceRef.current;
+        if (!map || !isEntryAuthenticated || pins.length === 0) return;
+        const targetPins =
+          selectedDayId === "all"
+            ? pins
+            : pins.filter((p) => (p.dayId || "day-1") === selectedDayId);
+        if (targetPins.length > 0) {
+          try {
+            const bounds = L.latLngBounds(targetPins.map((p) => [p.lat, p.lng]));
+            map.flyToBounds(bounds.pad(0.35), { duration: 0.75, maxZoom: 16 });
+          } catch (e) {}
+        }
+      }, [selectedDayId, isEntryAuthenticated]);
 
       const clearActiveAnimationLayers = () => {
         const map = mapInstanceRef.current;
@@ -3556,7 +4090,7 @@
         }
       };
 
-      // 📍 지도 위 마커 + 도보 시간 표시 배지 (XSS 이스케이프 처리 완료)
+      // 📍 지도 위 마커(픽셀 클러스터 + Spiderfy + Long-press 드래그) + Day별 동선 폴리라인 렌더링
       useEffect(() => {
         const map = mapInstanceRef.current;
         if (!map || !isEntryAuthenticated) return;
@@ -3571,64 +4105,333 @@
           return;
         }
 
-        // Day 필터에 따른 경로 선 렌더링
-        const routePins =
+        const currentZoom = map.getZoom() || 14;
+
+        // 1️⃣ 동선(폴리라인) 렌더링:
+        // - 모든 Day 모드("all"): Day별로 색상 구분 + 동선 클릭 시 해당 Day 모드로 즉시 전환
+        // - 특정 Day 모드: 해당 Day 동선만 표시 (다른 Day 동선은 절대 표시하지 않음)
+        const dayGroupsToDraw =
           selectedDayId === "all"
+            ? dayOptions.map((d) => ({
+                dayId: d.id,
+                dayLabel: d.label,
+                dayColor: getDayColorInfo(d.id, dayOptions),
+                dayPins: pins.filter((p) => (p.dayId || "day-1") === d.id)
+              }))
+            : [
+                {
+                  dayId: selectedDayId,
+                  dayLabel:
+                    dayOptions.find((d) => d.id === selectedDayId)?.label || "선택한 Day",
+                  dayColor: getDayColorInfo(selectedDayId, dayOptions),
+                  dayPins: pins.filter((p) => (p.dayId || "day-1") === selectedDayId)
+                }
+              ];
+
+        dayGroupsToDraw.forEach(({ dayId, dayLabel, dayColor, dayPins }) => {
+          for (let i = 0; i < dayPins.length - 1; i++) {
+            const pinA = dayPins[i];
+            const pinB = dayPins[i + 1];
+            const transit = estimateTransitInfo(pinA, pinB);
+            const bothDone = pinA.completed && pinB.completed;
+            const lineColor = bothDone ? "#10b981" : dayColor.line;
+
+            // 모바일에서 동선 클릭이 쉽도록 투명 히트 라인(weight 18) + 실제 표시 라인(weight 5) 구성
+            if (selectedDayId === "all") {
+              const hitLine = L.polyline(
+                [
+                  [pinA.lat, pinA.lng],
+                  [pinB.lat, pinB.lng]
+                ],
+                {
+                  color: lineColor,
+                  weight: 18,
+                  opacity: 0.01,
+                  interactive: true
+                }
+              ).addTo(map);
+              hitLine.on("click", (ev) => {
+                if (ev && ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+                setSelectedDayId(dayId);
+                lastSelectedDayIdRef.current = dayId;
+                showToast(`📅 ${dayLabel} 동선을 선택하여 ${dayLabel} 집중 모드로 전환했습니다!`);
+              });
+              polylinesRef.current.push(hitLine);
+            }
+
+            const segmentLine = L.polyline(
+              [
+                [pinA.lat, pinA.lng],
+                [pinB.lat, pinB.lng]
+              ],
+              {
+                color: lineColor,
+                weight: 5,
+                opacity: 0.88,
+                dashArray: bothDone ? null : "8, 8",
+                interactive: true
+              }
+            ).addTo(map);
+
+            if (selectedDayId === "all") {
+              segmentLine.on("click", (ev) => {
+                if (ev && ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+                setSelectedDayId(dayId);
+                lastSelectedDayIdRef.current = dayId;
+                showToast(`📅 ${dayLabel} 동선을 선택하여 ${dayLabel} 집중 모드로 전환했습니다!`);
+              });
+            }
+
+            if (transit) {
+              const isRelevantSegment =
+                pinA.id === selectedPin?.id ||
+                pinB.id === selectedPin?.id ||
+                (selectedDayId !== "all" && dayPins.length <= 4);
+              const tooltipPrefix = selectedDayId === "all" ? `[${escapeHtml(dayLabel)}] ` : "";
+              segmentLine.bindTooltip(
+                `${tooltipPrefix}🚶 도보 ${escapeHtml(transit.walkFormatted)}${
+                  selectedDayId === "all" ? " · 클릭 시 전환" : ""
+                }`,
+                {
+                  permanent: isRelevantSegment,
+                  direction: "center",
+                  className: "route-time-badge"
+                }
+              );
+            }
+            polylinesRef.current.push(segmentLine);
+          }
+        });
+
+        // 2️⃣ 표시 대상 핀 결정
+        // - 모든 Day 모드: 화면에 보이는 전체 핀 (경계 여유 pad 0.2 포함, 만약 현재 화면 내 핀이 0개면 전체 핀 유지)
+        // - 특정 Day 모드: 해당 Day 핀만 표시 (단, showFadedOtherDays가 켜진 경우에만 다른 Day 핀을 흐리게 배경 표시)
+        const mapBounds = map.getBounds ? map.getBounds().pad(0.2) : null;
+        const activeTargetPins = pins.filter((p) => {
+          if (selectedDayId !== "all" && (p.dayId || "day-1") !== selectedDayId) {
+            return false;
+          }
+          if (selectedDayId === "all" && mapBounds) {
+            return mapBounds.contains([p.lat, p.lng]);
+          }
+          return true;
+        });
+
+        const effectiveActivePins =
+          activeTargetPins.length > 0
+            ? activeTargetPins
+            : selectedDayId === "all"
             ? pins
             : pins.filter((p) => (p.dayId || "day-1") === selectedDayId);
 
-        for (let i = 0; i < routePins.length - 1; i++) {
-          const pinA = routePins[i];
-          const pinB = routePins[i + 1];
-          const transit = estimateTransitInfo(pinA, pinB);
-
-          const segmentLine = L.polyline(
-            [
-              [pinA.lat, pinA.lng],
-              [pinB.lat, pinB.lng]
-            ],
-            {
-              color: pinA.completed && pinB.completed ? "#10b981" : "#6366f1",
-              weight: 5,
-              opacity: 0.85,
-              dashArray: pinA.completed && pinB.completed ? null : "8, 8"
-            }
-          ).addTo(map);
-
-          if (transit) {
-            const isRelevantSegment =
-              pinA.id === selectedPin?.id || pinB.id === selectedPin?.id || routePins.length <= 3;
-            segmentLine.bindTooltip(
-              `🚶 도보 ${escapeHtml(transit.walkFormatted)}`,
-              {
-                permanent: isRelevantSegment,
-                direction: "center",
-                className: "route-time-badge"
-              }
-            );
-          }
-          polylinesRef.current.push(segmentLine);
+        // 옵션: 특정 Day 모드에서 "다른 Day 흐리게 보기"가 켜져 있을 때만 배경 참조 핀 렌더링 (클러스터 제외, 동선 없음)
+        if (selectedDayId !== "all" && showFadedOtherDays) {
+          const fadedPins = pins.filter((p) => (p.dayId || "day-1") !== selectedDayId);
+          fadedPins.forEach((pin) => {
+            const pInfo = pinOrderInfoMap.get(pin.id);
+            const fadedOrder = pInfo ? pInfo.dayOrder : "";
+            const fadedDayLabel = escapeHtml(pin.dayLabel || "다른 Day");
+            const fadedHtml = `
+              <div class="custom-pin" style="background: linear-gradient(135deg, #94a3b8, #64748b); opacity: 0.28; transform: rotate(-45deg) scale(0.84);">
+                <span>${fadedOrder}</span>
+              </div>
+            `;
+            const fadedIcon = L.divIcon({
+              html: fadedHtml,
+              className: "",
+              iconSize: [38, 38],
+              iconAnchor: [19, 38],
+              popupAnchor: [0, -38]
+            });
+            const fadedMarker = L.marker([pin.lat, pin.lng], {
+              icon: fadedIcon,
+              draggable: false,
+              zIndexOffset: -200
+            })
+              .addTo(map)
+              .bindPopup(
+                `<div style="min-width:160px; line-height:1.4;">
+                  <div style="font-size:11px; color:#94a3b8; font-weight:800;">${fadedDayLabel} · #${fadedOrder} (흐리게 보기)</div>
+                  <div style="font-size:13px; font-weight:900; color:#fff; margin-top:2px;">${escapeHtml(pin.name)}</div>
+                </div>`
+              );
+            markersRef.current.push(fadedMarker);
+          });
         }
 
-        pins.forEach((pin, idx) => {
-          const isSelected = pin.id === selectedPin?.id;
-          const isDayMatch = selectedDayId === "all" || (pin.dayId || "day-1") === selectedDayId;
+        // 3️⃣ 픽셀 기준 클러스터링 (CLUSTER_DISTANCE_PX = 44px, CLUSTER_DISABLE_ZOOM = 15)
+        // 순번(displayOrder) 오름차순으로 정렬하여 클러스터 대표 핀이 항상 가장 작은 숫자를 갖도록 보장
+        const sortedWithScreenPt = effectiveActivePins
+          .map((pin) => {
+            const info = pinOrderInfoMap.get(pin.id) || {
+              globalOrder: 1,
+              dayOrder: 1,
+              displayOrder: 1,
+              dayColor: getDayColorInfo(pin.dayId || "day-1", dayOptions),
+              facilityType: getFacilityType(pin)
+            };
+            const pt = map.latLngToContainerPoint([pin.lat, pin.lng]);
+            return { pin, info, pt };
+          })
+          .sort((a, b) => a.info.displayOrder - b.info.displayOrder);
 
-          // Day 필터 선택 시 해당 Day 외의 핀은 은은하게 반투명 처리
-          const markerOpacity = isDayMatch ? 1 : 0.28;
-          const markerScale = isSelected ? 1.22 : isDayMatch ? 1.05 : 0.85;
+        const renderItems = [];
+        const enableClustering = currentZoom < CLUSTER_DISABLE_ZOOM;
 
-          const bgColor = pin.completed
-            ? "linear-gradient(135deg, #10b981, #059669)"
-            : isSelected
-            ? "linear-gradient(135deg, #6366f1, #ec4899)"
-            : isDayMatch
-            ? "linear-gradient(135deg, #4f46e5, #06b6d4)"
-            : "linear-gradient(135deg, #94a3b8, #64748b)";
+        if (enableClustering) {
+          const assigned = new Set();
+          for (let i = 0; i < sortedWithScreenPt.length; i++) {
+            const seed = sortedWithScreenPt[i];
+            if (assigned.has(seed.pin.id)) continue;
+            assigned.add(seed.pin.id);
+
+            const members = [seed];
+            for (let j = i + 1; j < sortedWithScreenPt.length; j++) {
+              const cand = sortedWithScreenPt[j];
+              if (assigned.has(cand.pin.id)) continue;
+              const distPx = Math.hypot(seed.pt.x - cand.pt.x, seed.pt.y - cand.pt.y);
+              if (distPx <= CLUSTER_DISTANCE_PX) {
+                assigned.add(cand.pin.id);
+                members.push(cand);
+              }
+            }
+
+            renderItems.push({
+              rep: seed,
+              members,
+              count: members.length,
+              displayLat: seed.pin.lat,
+              displayLng: seed.pin.lng,
+              isSpiderfied: false
+            });
+          }
+        } else {
+          // 줌 레벨 >= 15: 클러스터 해제, 좌표가 거의 같아 겹치는 핀(PIN_SPIDERFY_PX 이내)은 소량 방사형 오프셋(spiderfy) 적용
+          const assignedSpider = new Set();
+          for (let i = 0; i < sortedWithScreenPt.length; i++) {
+            const seed = sortedWithScreenPt[i];
+            if (assignedSpider.has(seed.pin.id)) continue;
+            assignedSpider.add(seed.pin.id);
+
+            const overlapGroup = [seed];
+            for (let j = i + 1; j < sortedWithScreenPt.length; j++) {
+              const cand = sortedWithScreenPt[j];
+              if (assignedSpider.has(cand.pin.id)) continue;
+              const distPx = Math.hypot(seed.pt.x - cand.pt.x, seed.pt.y - cand.pt.y);
+              if (distPx <= PIN_SPIDERFY_PX) {
+                assignedSpider.add(cand.pin.id);
+                overlapGroup.push(cand);
+              }
+            }
+
+            if (overlapGroup.length === 1) {
+              renderItems.push({
+                rep: seed,
+                members: [seed],
+                count: 1,
+                displayLat: seed.pin.lat,
+                displayLng: seed.pin.lng,
+                isSpiderfied: false
+              });
+            } else {
+              const radiusPx = 24;
+              overlapGroup.forEach((item, k) => {
+                // 선택된 핀이 있으면 실제 좌표 강조, 나머지는 방사형 오프셋 배치
+                if (item.pin.id === selectedPin?.id) {
+                  renderItems.push({
+                    rep: item,
+                    members: [item],
+                    count: 1,
+                    displayLat: item.pin.lat,
+                    displayLng: item.pin.lng,
+                    isSpiderfied: false
+                  });
+                } else {
+                  const angle = (2 * Math.PI * k) / overlapGroup.length - Math.PI / 2;
+                  const offsetPt = L.point(
+                    item.pt.x + Math.cos(angle) * radiusPx,
+                    item.pt.y + Math.sin(angle) * radiusPx
+                  );
+                  const offsetLatLng = map.containerPointToLatLng(offsetPt);
+                  // 실제 좌표와 spiderfy 위치를 잇는 안내 점선
+                  const legLine = L.polyline(
+                    [
+                      [item.pin.lat, item.pin.lng],
+                      [offsetLatLng.lat, offsetLatLng.lng]
+                    ],
+                    {
+                      color: "#f8fafc",
+                      weight: 2,
+                      opacity: 0.75,
+                      dashArray: "3, 4",
+                      interactive: false
+                    }
+                  ).addTo(map);
+                  polylinesRef.current.push(legLine);
+
+                  renderItems.push({
+                    rep: item,
+                    members: [item],
+                    count: 1,
+                    displayLat: offsetLatLng.lat,
+                    displayLng: offsetLatLng.lng,
+                    isSpiderfied: true
+                  });
+                }
+              });
+            }
+          }
+        }
+
+        // 4️⃣ 마커 생성 + 클러스터 클릭 줌인 + 단일 핀 Long-press(450ms) 드래그 핸들러 연결
+        renderItems.forEach((clusterItem) => {
+          const { rep, members, count, displayLat, displayLng } = clusterItem;
+          const pin = rep.pin;
+          const info = rep.info;
+          const isCluster = count >= 2;
+          const isSelected = members.some((m) => m.pin.id === selectedPin?.id);
+          const facilityType = info.facilityType;
+          const markerScale = isSelected ? 1.22 : isCluster ? 1.12 : 1.05;
+
+          // 핀 색상 결정:
+          // - 완료된 단일 핀: 에메랄드 그린
+          // - 선택된 핀: 인디고-핑크 그라데이션
+          // - 그 외: 대표 번호가 속한 Day의 고유 색상 그라데이션
+          const bgColor =
+            !isCluster && pin.completed
+              ? "linear-gradient(135deg, #10b981, #059669)"
+              : isSelected
+              ? "linear-gradient(135deg, #6366f1, #ec4899)"
+              : info.dayColor.gradient;
+
+          const facilityClass =
+            facilityType === "hotel"
+              ? "pin-hotel"
+              : facilityType === "airport"
+              ? "pin-airport"
+              : "";
+
+          const facilityEmoji =
+            facilityType === "hotel" ? "🏨" : facilityType === "airport" ? "✈️" : "";
+
+          const clusterBadgeHtml = isCluster
+            ? `<div class="pin-cluster-badge" title="겹친 장소 ${count}개">${count}</div>`
+            : "";
+
+          const facilityBadgeHtml =
+            !isCluster && facilityEmoji
+              ? `<div class="pin-facility-badge" title="${
+                  facilityType === "hotel" ? "숙소/호텔" : "공항/교통"
+                }">${facilityEmoji}</div>`
+              : "";
+
+          const mainLabel = !isCluster && pin.completed ? "✓" : info.displayOrder;
 
           const iconHtml = `
-            <div class="custom-pin ${isSelected ? "pin-active" : ""}" style="background: ${bgColor}; opacity: ${markerOpacity}; transform: rotate(-45deg) scale(${markerScale});">
-              <span>${pin.completed ? "✓" : idx + 1}</span>
+            <div class="custom-pin ${isSelected ? "pin-active" : ""} ${facilityClass}" style="background: ${bgColor}; transform: rotate(-45deg) scale(${markerScale});">
+              <span>${mainLabel}</span>
+              ${facilityBadgeHtml}
+              ${clusterBadgeHtml}
             </div>
           `;
 
@@ -3640,27 +4443,64 @@
             popupAnchor: [0, -38]
           });
 
-          const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
-          const nextPin = pins[idx + 1];
-          const nextTransit = nextPin ? estimateTransitInfo(pin, nextPin) : null;
-
-          const safeCategory = escapeHtml(pin.category);
-          const safeName = escapeHtml(pin.name);
-          const safeAvgLabel = escapeHtml(avgSpend.label);
-          const safeNextName = nextPin ? escapeHtml(nextPin.name) : "";
-          const safeNextWalk = nextTransit ? escapeHtml(nextTransit.walkFormatted) : "";
-
-          const marker = L.marker([pin.lat, pin.lng], {
+          const marker = L.marker([displayLat, displayLng], {
             icon: customIcon,
-            draggable: true
-          })
-            .addTo(map)
-            .bindPopup(
-              `<div style="min-width: 195px; line-height: 1.45;">
-                <div style="font-size:11px; color:#818cf8; font-weight:800;">코스 #${idx + 1} · ${safeCategory}</div>
+            draggable: false,
+            zIndexOffset: isSelected ? 500 : isCluster ? 300 : 100
+          }).addTo(map);
+
+          if (isCluster) {
+            // 클러스터 클릭 시 해당 영역으로 부드럽게 줌 인하여 핀 분리
+            marker.on("click", () => {
+              const latLngs = members.map((m) => [m.pin.lat, m.pin.lng]);
+              const bounds = L.latLngBounds(latLngs);
+              const nextZoom = Math.min(20, Math.max(currentZoom + 2, CLUSTER_DISABLE_ZOOM));
+              const isSameSpot =
+                Math.abs(bounds.getNorth() - bounds.getSouth()) < 0.0003 &&
+                Math.abs(bounds.getEast() - bounds.getWest()) < 0.0003;
+              if (isSameSpot) {
+                map.setView([pin.lat, pin.lng], nextZoom, { animate: true });
+              } else {
+                map.flyToBounds(bounds.pad(0.45), {
+                  maxZoom: nextZoom,
+                  duration: 0.65
+                });
+              }
+              const previewNames = members
+                .slice(0, 3)
+                .map((m) => `#${m.info.displayOrder} ${m.pin.name}`)
+                .join(", ");
+              showToast(
+                `🔍 겹친 ${count}개 핀(${previewNames}${count > 3 ? " 외" : ""}) 위치를 확대합니다!`
+              );
+            });
+          } else {
+            // 단일 핀 팝업 바인딩
+            const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
+            const sameDayPins =
+              selectedDayId === "all"
+                ? pins
+                : pins.filter((p) => (p.dayId || "day-1") === (pin.dayId || "day-1"));
+            const posInRoute = sameDayPins.findIndex((p) => p.id === pin.id);
+            const nextPin = posInRoute >= 0 ? sameDayPins[posInRoute + 1] : null;
+            const nextTransit = nextPin ? estimateTransitInfo(pin, nextPin) : null;
+
+            const safeCategory = escapeHtml(pin.category);
+            const safeName = escapeHtml(pin.name);
+            const safeAvgLabel = escapeHtml(avgSpend.label);
+            const safeNextName = nextPin ? escapeHtml(nextPin.name) : "";
+            const safeNextWalk = nextTransit ? escapeHtml(nextTransit.walkFormatted) : "";
+            const safeDayBadge = escapeHtml(pin.dayLabel || "Day 1");
+
+            marker.bindPopup(
+              `<div style="min-width: 205px; line-height: 1.45;">
+                <div style="font-size:11px; color:#818cf8; font-weight:800;">${safeDayBadge} · 코스 #${info.displayOrder} · ${safeCategory}</div>
                 <div style="font-size:14px; font-weight:900; margin: 2px 0 4px; color:#fff;">${safeName}</div>
                 <div style="font-size:11px; color:#34d399; font-weight:800; background:rgba(16,185,129,0.12); padding:4px 7px; border-radius:8px; margin-bottom:5px;">
                   📊 인당 평균: ${safeAvgLabel} (약 ${escapeHtml(formatKRW(avgSpend.avgYen * exchangeRate))})
+                </div>
+                <div style="font-size:10px; color:#cbd5e1; margin-top:3px;">
+                  💡 핀 위치 변경: 0.45초 길게 누른 뒤 드래그하세요
                 </div>
                 ${
                   nextTransit
@@ -3672,30 +4512,180 @@
               </div>`
             );
 
-          marker.on("click", () => {
-            setSelectedPinId(pin.id);
-          });
+            // 일반 클릭/터치: 핀 선택 및 정보만 표시 (절대 위치 변경 없음)
+            marker.on("click", () => {
+              setSelectedPinId(pin.id);
+            });
 
-          marker.on("dragend", (e) => {
-            const newPos = e.target.getLatLng();
-            setPins((prev) =>
-              prev.map((p) =>
-                p.id === pin.id ? { ...p, lat: newPos.lat, lng: newPos.lng } : p
-              )
-            );
-            setSelectedPinId(pin.id);
-            showToast(`📍 '${pin.name}' 위치가 이동되어 클라우드에 동기화됩니다!`);
-          });
+            // ✋ Long-press (450ms) 후에만 드래그 모드 진입 (패닝 중 실수로 핀이 움직이는 현상 완전 방지)
+            const el = marker.getElement();
+            if (el) {
+              let lpTimer = null;
+              let isPinDragging = false;
+              let startX = 0;
+              let startY = 0;
+              let latestLatLng = L.latLng(pin.lat, pin.lng);
+
+              const clearLpTimer = () => {
+                if (lpTimer) {
+                  clearTimeout(lpTimer);
+                  lpTimer = null;
+                }
+              };
+
+              const cleanupWindowListeners = () => {
+                window.removeEventListener("pointermove", onWindowMove, { passive: false });
+                window.removeEventListener("pointerup", onWindowUp);
+                window.removeEventListener("pointercancel", onWindowUp);
+                window.removeEventListener("touchmove", onWindowTouchMove, { passive: false });
+                window.removeEventListener("touchend", onWindowUp);
+                window.removeEventListener("touchcancel", onWindowUp);
+                map.off("movestart zoomstart", clearLpTimer);
+              };
+
+              const updateMarkerFromClientXY = (clientX, clientY) => {
+                const container = map.getContainer();
+                if (!container) return;
+                const rect = container.getBoundingClientRect();
+                const pt = L.point(clientX - rect.left, clientY - rect.top);
+                latestLatLng = map.containerPointToLatLng(pt);
+                marker.setLatLng(latestLatLng);
+              };
+
+              const onWindowMove = (ev) => {
+                const cx = ev.clientX ?? (ev.touches && ev.touches[0]?.clientX) ?? startX;
+                const cy = ev.clientY ?? (ev.touches && ev.touches[0]?.clientY) ?? startY;
+                if (!isPinDragging) {
+                  if (Math.hypot(cx - startX, cy - startY) > 8) {
+                    clearLpTimer();
+                    cleanupWindowListeners();
+                  }
+                  return;
+                }
+                if (ev.cancelable) ev.preventDefault();
+                updateMarkerFromClientXY(cx, cy);
+              };
+
+              const onWindowTouchMove = (ev) => {
+                const touch = ev.touches && ev.touches[0];
+                if (!touch) return;
+                if (!isPinDragging) {
+                  if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > 8) {
+                    clearLpTimer();
+                    cleanupWindowListeners();
+                  }
+                  return;
+                }
+                if (ev.cancelable) ev.preventDefault();
+                updateMarkerFromClientXY(touch.clientX, touch.clientY);
+              };
+
+              const onWindowUp = () => {
+                clearLpTimer();
+                cleanupWindowListeners();
+
+                const pinDom = el.querySelector(".custom-pin");
+                if (pinDom) {
+                  pinDom.classList.remove("pin-longpress-active");
+                  const readyLabel = pinDom.querySelector(".pin-drag-ready-label");
+                  if (readyLabel) readyLabel.remove();
+                }
+
+                if (!isPinDragging) return;
+                isPinDragging = false;
+                try {
+                  map.dragging?.enable();
+                } catch (e) {}
+
+                const origPt = map.latLngToContainerPoint([pin.lat, pin.lng]);
+                const nextPt = map.latLngToContainerPoint(latestLatLng);
+                if (Math.hypot(origPt.x - nextPt.x, origPt.y - nextPt.y) < 4) {
+                  marker.setLatLng([pin.lat, pin.lng]);
+                  return;
+                }
+
+                // 드롭 시 확인 모달 오픈 (예 -> 확정 + 클라우드 동기화 / 아니오 -> 원복)
+                setPinMoveConfirmModal({
+                  isOpen: true,
+                  pinId: pin.id,
+                  pinName: pin.name,
+                  prevLat: pin.lat,
+                  prevLng: pin.lng,
+                  nextLat: Number(latestLatLng.lat.toFixed(6)),
+                  nextLng: Number(latestLatLng.lng.toFixed(6))
+                });
+              };
+
+              const onStartHold = (clientX, clientY) => {
+                if (pinMoveConfirmModal.isOpen) return;
+                clearLpTimer();
+                isPinDragging = false;
+                startX = clientX;
+                startY = clientY;
+                latestLatLng = L.latLng(pin.lat, pin.lng);
+
+                map.on("movestart zoomstart", clearLpTimer);
+                window.addEventListener("pointermove", onWindowMove, { passive: false });
+                window.addEventListener("pointerup", onWindowUp);
+                window.addEventListener("pointercancel", onWindowUp);
+                window.addEventListener("touchmove", onWindowTouchMove, { passive: false });
+                window.addEventListener("touchend", onWindowUp);
+                window.addEventListener("touchcancel", onWindowUp);
+
+                lpTimer = setTimeout(() => {
+                  lpTimer = null;
+                  isPinDragging = true;
+                  try {
+                    if (navigator.vibrate) navigator.vibrate(25);
+                  } catch (e) {}
+                  try {
+                    map.dragging?.disable();
+                    marker.closePopup();
+                  } catch (e) {}
+
+                  const pinDom = el.querySelector(".custom-pin");
+                  if (pinDom) {
+                    pinDom.classList.add("pin-longpress-active");
+                    if (!pinDom.querySelector(".pin-drag-ready-label")) {
+                      const badge = document.createElement("div");
+                      badge.className = "pin-drag-ready-label";
+                      badge.textContent = "이동 가능 · 드래그하세요";
+                      pinDom.appendChild(badge);
+                    }
+                  }
+                }, PIN_LONG_PRESS_MS);
+              };
+
+              el.addEventListener("pointerdown", (ev) => {
+                if (ev.button != null && ev.button !== 0) return;
+                onStartHold(ev.clientX, ev.clientY);
+              });
+              el.addEventListener(
+                "touchstart",
+                (ev) => {
+                  if (window.PointerEvent) return; // pointerdown 지원 브라우저는 중복 실행 방지
+                  const t = ev.touches && ev.touches[0];
+                  if (t) onStartHold(t.clientX, t.clientY);
+                },
+                { passive: true }
+              );
+            }
+          }
 
           markersRef.current.push(marker);
         });
-
-        // Day 필터 변경 시 해당 Day 마커 영역으로 부드럽게 시야 이동
-        if (selectedDayId !== "all" && routePins.length > 0) {
-          const bounds = L.latLngBounds(routePins.map((p) => [p.lat, p.lng]));
-          map.flyToBounds(bounds.pad(0.35), { duration: 0.8 });
-        }
-      }, [isEntryAuthenticated, pins, selectedPin, exchangeRate, selectedDayId]);
+      }, [
+        isEntryAuthenticated,
+        pins,
+        selectedPin,
+        exchangeRate,
+        selectedDayId,
+        dayOptions,
+        pinOrderInfoMap,
+        showFadedOtherDays,
+        mapViewportTick,
+        pinMoveConfirmModal.isOpen
+      ]);
 
       const handleOptimizeShortestRoute = () => {
         if (pins.length < 3) {
@@ -4204,10 +5194,24 @@
         }
       };
 
-      const addPinToMap = ({ name, category, address, lat, lng, spendInfo }) => {
+      const addPinToMap = ({
+        name,
+        category,
+        tags,
+        address,
+        lat,
+        lng,
+        spendInfo,
+        insertPosition = "course"
+      }) => {
         explicitlyClearedRef.current = false;
         const finalCategory = category || customCategory;
         const computedSpend = spendInfo || estimateGoogleAvgSpend(name, finalCategory);
+        const inferredTags = inferFacilityTags({
+          name,
+          category: finalCategory,
+          tags
+        });
 
         // E. 새 장소 추가 시 Day 붙이기
         const targetDayId =
@@ -4222,14 +5226,20 @@
           "Day 1";
 
         const newPin = {
-          id: "pin-" + Date.now(),
+          id: "pin-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
           name,
           category: finalCategory,
+          tags: inferredTags,
           address: address || "",
           lat: Number(lat),
           lng: Number(lng),
           completed: false,
-          memo: "",
+          memo:
+            insertPosition === "start"
+              ? "🌅 Day 출발 거점"
+              : insertPosition === "end"
+              ? "🏁 Day 도착/숙박 거점"
+              : "",
           customTransitMinutes: null,
           spendInfo: computedSpend,
           items: [],
@@ -4238,17 +5248,28 @@
           localTodos: []
         };
 
-        setPins((prev) => {
-          const nextPins = [...prev, newPin];
-          pushCloudData(
-            {
-              ...latestStateRef.current,
-              pins: nextPins
-            },
-            false
-          );
-          return nextPins;
-        });
+        const prevSnapshot = [...pins];
+        let nextPins;
+        if (insertPosition === "start") {
+          nextPins = insertPinIntoDayBoundary(pins, newPin, targetDayId, "start");
+        } else if (insertPosition === "end") {
+          nextPins = insertPinIntoDayBoundary(pins, newPin, targetDayId, "end");
+        } else {
+          nextPins = insertPinIntoDayBoundary(pins, newPin, targetDayId, "end");
+        }
+
+        const posToast =
+          insertPosition === "start"
+            ? `${targetDayLabel} 시작 위치로`
+            : insertPosition === "end"
+            ? `${targetDayLabel} 종료 위치로`
+            : `${targetDayLabel} 코스에`;
+
+        commitPinsWithRollback(
+          nextPins,
+          prevSnapshot,
+          `📍 '${newPin.name}' (${posToast}) 추가 및 클라우드 실시간 동기화 완료!`
+        );
         setSelectedPinId(newPin.id);
         setShowAddModal(false);
         setSearchKeyword("");
@@ -4257,17 +5278,17 @@
         if (mapInstanceRef.current) {
           mapInstanceRef.current.flyTo([newPin.lat, newPin.lng], 16, { duration: 0.9 });
         }
-        showToast(`📍 '${newPin.name}' 추가 및 클라우드 실시간 동기화 완료!`);
       };
 
       const handleMovePinOrder = (index, direction) => {
         const targetIndex = index + direction;
         if (targetIndex < 0 || targetIndex >= pins.length) return;
+        const prevSnapshot = [...pins];
         const copied = [...pins];
         const temp = copied[index];
         copied[index] = copied[targetIndex];
         copied[targetIndex] = temp;
-        setPins(copied);
+        commitPinsWithRollback(copied, prevSnapshot, "🔄 코스 순서가 변경되었습니다!");
       };
 
 // (Drag handlers moved to top of App component)
@@ -5158,6 +6179,51 @@
             </div>
           )}
 
+          {/* 📌 핀 Long-press 드래그 후 위치 확정 확인 모달 (실수로 핀이 옮겨지는 현상 방지) */}
+          {pinMoveConfirmModal.isOpen && (
+            <div
+              className="modal-overlay"
+              onClick={handleCancelPinMove}
+            >
+              <div
+                className="modal-panel confirm-panel max-w-sm"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center mx-auto text-2xl">
+                  📍
+                </div>
+                <div className="space-y-1.5 text-center">
+                  <h3 className="font-black text-base sm:text-lg text-slate-900">
+                    핀을 이 위치로 옮기시겠습니까?
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed break-keep">
+                    <b className="text-indigo-700">'{pinMoveConfirmModal.pinName}'</b> 핀의 좌표를 변경하고 클라우드에 동기화합니다.
+                  </p>
+                  <div className="text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-500">
+                    <div>이전: {Number(pinMoveConfirmModal.prevLat).toFixed(5)}, {Number(pinMoveConfirmModal.prevLng).toFixed(5)}</div>
+                    <div className="text-indigo-700 font-bold">변경: {Number(pinMoveConfirmModal.nextLat).toFixed(5)}, {Number(pinMoveConfirmModal.nextLng).toFixed(5)}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleCancelPinMove}
+                    className="btn-ghost text-xs font-extrabold py-2.5"
+                  >
+                    아니오 (원복)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmPinMove}
+                    className="btn-primary text-xs font-extrabold py-2.5"
+                  >
+                    예 (위치 확정)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* =================================================================
               📱 상단 네이티브 앱 헤더 (Apple Liquid Glass)
              ================================================================= */}
@@ -5351,16 +6417,57 @@
                   <button
                     onClick={() => {
                       if (mapInstanceRef.current && pins.length > 0) {
-                        const bounds = L.latLngBounds(pins.map((p) => [p.lat, p.lng]));
+                        const targetPins =
+                          selectedDayId === "all"
+                            ? pins
+                            : pins.filter((p) => (p.dayId || "day-1") === selectedDayId);
+                        const listToFit = targetPins.length > 0 ? targetPins : pins;
+                        const bounds = L.latLngBounds(listToFit.map((p) => [p.lat, p.lng]));
                         mapInstanceRef.current.flyToBounds(bounds.pad(0.3), { duration: 0.8 });
                       }
                     }}
                     className="glass-pill-btn pointer-events-auto"
                   >
                     <span>🔍</span>
-                    <span>전체 코스</span>
+                    <span>{selectedDayId === "all" ? "전체 코스" : "이 Day 보기"}</span>
                   </button>
                 </div>
+
+                {/* 🎨 Day 색상 범례 + 동선 클릭 안내 (모든 Day 모드 또는 범례 표시) */}
+                {pins.length > 0 && (
+                  <div className="absolute bottom-2.5 right-2.5 left-12 z-20 flex items-center justify-end pointer-events-none">
+                    <div className="pointer-events-auto bg-white/90 backdrop-blur-md border border-slate-200/90 rounded-2xl px-2.5 py-1.5 shadow-md flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-full">
+                      {dayOptions.map((d) => {
+                        const dc = getDayColorInfo(d.id, dayOptions);
+                        const isActive = selectedDayId === d.id;
+                        return (
+                          <button
+                            key={d.id}
+                            type="button"
+                            onClick={() =>
+                              setSelectedDayId((prev) => (prev === d.id ? "all" : d.id))
+                            }
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold transition shrink-0 ${
+                              isActive
+                                ? "bg-slate-900 text-white shadow-xs"
+                                : "bg-slate-100/80 hover:bg-slate-200/80 text-slate-700"
+                            }`}
+                            title={`${d.label} 집중 보기 (동선 클릭으로도 전환 가능)`}
+                          >
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ background: dc.primary }}
+                            />
+                            <span>{d.label}</span>
+                          </button>
+                        );
+                      })}
+                      <span className="text-[10px] font-bold text-slate-400 shrink-0 pl-1 border-l border-slate-200">
+                        🏨숙소 ✈️공항
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {(animatingInfo || lastCompletedSegment) && (
                   <div className="absolute bottom-2.5 left-2.5 right-2.5 z-30 bg-white/95 backdrop-blur-xl border border-sky-300 rounded-2xl p-2.5 sm:p-3 shadow-xl">
@@ -5410,20 +6517,39 @@
               <section className="lg:col-span-6 lg:order-1 flex flex-col space-y-2.5">
                 {/* 필터 + Day 바 — sticky glass (Requirement 2) */}
                 <div className="sticky top-0 z-10 space-y-2 glass-card p-2.5">
-                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-                    {["전체", "남은 일정", "완료"].map((label, i) => {
-                      const id = ["all", "remaining", "done"][i];
-                      return (
-                        <button
-                          key={id}
-                          className={`day-chip ${courseFilter === id ? "day-chip-active" : "day-chip-idle"}`}
-                          onClick={() => setCourseFilter(id)}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
+                  <div className="flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar">
+                    <div className="flex gap-1.5 shrink-0">
+                      {["전체", "남은 일정", "완료"].map((label, i) => {
+                        const id = ["all", "remaining", "done"][i];
+                        return (
+                          <button
+                            key={id}
+                            className={`day-chip ${courseFilter === id ? "day-chip-active" : "day-chip-idle"}`}
+                            onClick={() => setCourseFilter(id)}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* 👁️ 특정 Day 선택 시 "다른 Day 흐리게 보기" 옵션 토글 (기본: 숨김) */}
+                    {selectedDayId !== "all" && (
+                      <button
+                        type="button"
+                        onClick={() => setShowFadedOtherDays((v) => !v)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold border transition shrink-0 flex items-center gap-1 ${
+                          showFadedOtherDays
+                            ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                            : "bg-white/80 text-slate-600 border-slate-200 hover:bg-slate-100"
+                        }`}
+                        title="기본은 선택한 Day 핀·동선만 깔끔하게 표시하며, 켜면 다른 Day 핀을 흐리게 함께 표시합니다."
+                      >
+                        <span>{showFadedOtherDays ? "👁️ 다른 Day 흐리게 켜짐" : "🙈 이 Day만 집중 표시"}</span>
+                      </button>
+                    )}
                   </div>
+
                   <div className="flex gap-1.5 overflow-x-auto no-scrollbar items-center">
                     <button
                       className={`day-chip ${selectedDayId === "all" ? "day-chip-active" : "day-chip-idle"}`}
@@ -5434,16 +6560,23 @@
                     {dayOptions.map((d) => {
                       const isSelected = selectedDayId === d.id;
                       const canDelete = dayOptions.length > 1;
+                      const dc = getDayColorInfo(d.id, dayOptions);
                       return (
                         <div key={d.id} className="relative inline-flex items-center">
                           <button
-                            className={`day-chip ${isSelected ? "day-chip-active" : "day-chip-idle"} ${canDelete ? "pr-2" : ""}`}
+                            className={`day-chip ${isSelected ? "day-chip-active" : "day-chip-idle"} ${canDelete ? "pr-2" : ""} inline-flex items-center gap-1.5`}
                             onClick={() => setSelectedDayId(d.id)}
                           >
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{
+                                background: isSelected ? "#ffffff" : dc.primary
+                              }}
+                            />
                             <span>{d.label}</span>
                             {canDelete && (
                               <span
-                                className="ml-1.5 w-4 h-4 rounded-full hover:bg-rose-100 hover:text-rose-600 text-slate-400 inline-flex items-center justify-center text-[10px] font-black transition"
+                                className="ml-1 w-4 h-4 rounded-full hover:bg-rose-100 hover:text-rose-600 text-slate-400 inline-flex items-center justify-center text-[10px] font-black transition"
                                 title={`${d.label} 삭제`}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -5462,10 +6595,144 @@
                     </button>
                   </div>
 
+                  {/* 🏨/✈️ 숙소·공항 시작/종료 빠른 설정 + 일괄 적용 바 (Requirement 4) */}
+                  <div className="pt-1.5 border-t border-slate-200/70 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] font-extrabold text-slate-700 flex items-center gap-1">
+                        <span>🏨✈️ 숙소·공항 빠른 거점 배치</span>
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-full">
+                          풀 {hotelAirportPool.length}곳
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomCategory("🏨 숙소·호텔");
+                          setShowAddModal(true);
+                        }}
+                        className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-extrabold transition"
+                      >
+                        ＋ 숙소·공항 추가 등록
+                      </button>
+                    </div>
+
+                    {hotelAirportPool.length === 0 ? (
+                      <div className="text-[11px] text-slate-500 bg-slate-50/80 border border-slate-200/70 rounded-xl px-2.5 py-1.5">
+                        등록된 숙소(🏨)나 공항(✈️)이 없습니다. <b>[＋ 숙소·공항 추가 등록]</b>으로 여러 숙소·공항을 등록해두면 각 Day 시작/종료나 코스 중간에 언제든 넣을 수 있습니다.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {/* 시작 위치 지정 */}
+                        <div className="p-2 rounded-xl bg-white/80 border border-slate-200/90 space-y-1.5">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[10px] font-black text-indigo-700">
+                              🌅 시작(출발) 위치 선택
+                            </span>
+                            <span className="text-[10px] text-slate-400">맨 앞에 삽입</span>
+                          </div>
+                          <select
+                            value={quickStartFacilityKey}
+                            onChange={(e) => setQuickStartFacilityKey(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-800 focus:outline-none focus:border-indigo-400"
+                          >
+                            {hotelAirportPool.map((f) => (
+                              <option key={f.key} value={f.key}>
+                                {f.facilityType === "airport" ? "✈️" : "🏨"} {f.name} ({f.dayLabels.join(",")})
+                              </option>
+                            ))}
+                          </select>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleApplyDayFacilityBoundary(
+                                  quickStartFacilityKey,
+                                  "start",
+                                  "current"
+                                )
+                              }
+                              className="flex-1 py-1 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-extrabold transition"
+                            >
+                              현재 Day 시작
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleApplyDayFacilityBoundary(
+                                  quickStartFacilityKey,
+                                  "start",
+                                  "subsequent"
+                                )
+                              }
+                              className="py-1 px-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[10px] font-extrabold transition"
+                              title="현재 선택된 Day부터 마지막 Day까지 모두 시작 위치로 일괄 적용"
+                            >
+                              이후 모든 Day 시작
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 종료 위치 지정 */}
+                        <div className="p-2 rounded-xl bg-white/80 border border-slate-200/90 space-y-1.5">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[10px] font-black text-emerald-700">
+                              🏁 종료(숙박/도착) 위치 선택
+                            </span>
+                            <span className="text-[10px] text-slate-400">맨 뒤에 삽입</span>
+                          </div>
+                          <select
+                            value={quickEndFacilityKey}
+                            onChange={(e) => setQuickEndFacilityKey(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-800 focus:outline-none focus:border-emerald-400"
+                          >
+                            {hotelAirportPool.map((f) => (
+                              <option key={f.key} value={f.key}>
+                                {f.facilityType === "airport" ? "✈️" : "🏨"} {f.name} ({f.dayLabels.join(",")})
+                              </option>
+                            ))}
+                          </select>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleApplyDayFacilityBoundary(
+                                  quickEndFacilityKey,
+                                  "end",
+                                  "current"
+                                )
+                              }
+                              className="flex-1 py-1 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-extrabold transition"
+                            >
+                              현재 Day 종료
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleApplyDayFacilityBoundary(
+                                  quickEndFacilityKey,
+                                  "end",
+                                  "subsequent"
+                                )
+                              }
+                              className="py-1 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-[10px] font-extrabold transition"
+                              title="현재 선택된 Day부터 마지막 Day까지 모두 종료 위치로 일괄 적용"
+                            >
+                              이후 모든 Day 종료
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* 📋 현재 필터/Day 일정 텍스트 원터치 복사 바 */}
                   <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                     <span className="text-[11px] font-bold text-slate-500">
-                      {selectedDayId === "all" ? "전체 일정" : dayOptions.find(d => d.id === selectedDayId)?.label || selectedDayId} ({visiblePins.length}곳)
+                      {selectedDayId === "all"
+                        ? `전체 일정 (순번 1~${visiblePins.length})`
+                        : `${
+                            dayOptions.find((d) => d.id === selectedDayId)?.label || selectedDayId
+                          } 집중 모드 (순번 1~${visiblePins.length} · 다른 Day 동선 숨김)`}
                     </span>
                     <button
                       type="button"
@@ -5534,7 +6801,21 @@
                         dragOverIndex === index;
                       const pinTotalKRW = (pin.items || []).reduce((s, i) => s + Number(i.price || 0), 0);
                       const avgSpend = pin.spendInfo || estimateGoogleAvgSpend(pin.name, pin.category);
-                      const nextPin = realIndex >= 0 && realIndex < pins.length - 1 ? pins[realIndex + 1] : null;
+                      const pOrderInfo = pinOrderInfoMap.get(pin.id) || {
+                        globalOrder: realIndex + 1,
+                        dayOrder: index + 1,
+                        displayOrder: selectedDayId === "all" ? realIndex + 1 : index + 1,
+                        dayColor: getDayColorInfo(pin.dayId || "day-1", dayOptions),
+                        facilityType: getFacilityType(pin)
+                      };
+                      // 특정 Day 모드에서는 해당 Day 다음 핀만, 모든 Day 모드에서도 같은 Day 내 다음 핀만 도보 연결 표시
+                      const nextCandidate = index < visiblePins.length - 1 ? visiblePins[index + 1] : null;
+                      const nextPin =
+                        nextCandidate &&
+                        (selectedDayId !== "all" ||
+                          (nextCandidate.dayId || "day-1") === (pin.dayId || "day-1"))
+                          ? nextCandidate
+                          : null;
                       const transitToNext = nextPin ? estimateTransitInfo(pin, nextPin) : null;
 
                       return (
@@ -5555,9 +6836,6 @@
                               setExpandedPinId((prev) => (prev === pin.id ? null : pin.id));
                               if (mapInstanceRef.current) {
                                 mapInstanceRef.current.flyTo([pin.lat, pin.lng], 16, { duration: 0.7 });
-                                if (markersRef.current[realIndex]) {
-                                  markersRef.current[realIndex].openPopup();
-                                }
                               }
                             }}
                             className={`
@@ -5588,6 +6866,14 @@
 
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                  {/* 🔢 현재 모드 방문 순번 배지 (특정 Day: 1,2,3... / 모든 Day: 전체 1,2,3...) */}
+                                  <span
+                                    className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-black text-white shadow-2xs"
+                                    style={{ background: pOrderInfo.dayColor.gradient }}
+                                  >
+                                    #{pOrderInfo.displayOrder}
+                                  </span>
+
                                   {/* Day select 연결 (Day 변경 및 라벨 표시) */}
                                   <select
                                     value={pin.dayId || "day-1"}
@@ -5606,6 +6892,19 @@
                                       </option>
                                     ))}
                                   </select>
+
+                                  {/* 숙소/공항 구분 배지 */}
+                                  {pOrderInfo.facilityType === "hotel" && (
+                                    <span className="text-[10px] font-extrabold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded-md">
+                                      🏨 숙소거점
+                                    </span>
+                                  )}
+                                  {pOrderInfo.facilityType === "airport" && (
+                                    <span className="text-[10px] font-extrabold text-sky-800 bg-sky-100 border border-sky-300 px-1.5 py-0.5 rounded-md">
+                                      ✈️ 공항거점
+                                    </span>
+                                  )}
+
                                   <span className="text-[11px] font-bold text-slate-500">
                                     {pin.category}
                                   </span>
@@ -5712,8 +7011,13 @@
                                       "코스를 삭제하시겠습니까?",
                                       `'${pin.name || "선택한 장소"}' 코스와 등록된 예산 항목(${pin.items.length}건)이 함께 삭제됩니다.`,
                                       () => {
-                                        setPins((prev) => prev.filter((p) => p.id !== pin.id));
-                                        showToast(`'${pin.name || "장소"}' 코스가 삭제되었습니다.`);
+                                        const prevSnapshot = [...pins];
+                                        const nextPins = pins.filter((p) => p.id !== pin.id);
+                                        commitPinsWithRollback(
+                                          nextPins,
+                                          prevSnapshot,
+                                          `'${pin.name || "장소"}' 코스가 삭제되었습니다.`
+                                        );
                                       }
                                     )
                                   }
@@ -6782,28 +8086,18 @@
                 </form>
 
                 {searchResults.length > 0 && (
-                  <div className="space-y-2 max-h-60 overflow-y-auto bg-slate-50 p-2.5 rounded-2xl border border-indigo-100">
+                  <div className="space-y-2 max-h-64 overflow-y-auto bg-slate-50 p-2.5 rounded-2xl border border-indigo-100">
                     <div className="text-xs font-extrabold text-indigo-700 px-1">
-                      ✅ 검색 결과 목록 ({searchResults.length}건) — 인당 평균 지출액 자동 분석됨
+                      ✅ 검색 결과 목록 ({searchResults.length}건) — 시작/종료/코스 중간 어디든 추가 가능
                     </div>
                     {searchResults.map((res, idx) => {
                       const sp = res.spendInfo || estimateGoogleAvgSpend(res.name, customCategory);
                       return (
                         <div
                           key={idx}
-                          onClick={() =>
-                            addPinToMap({
-                              name: res.name,
-                              category: customCategory,
-                              address: res.address,
-                              lat: res.lat,
-                              lng: res.lng,
-                              spendInfo: sp
-                            })
-                          }
-                          className="p-2.5 rounded-xl bg-white hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-300 cursor-pointer flex items-center justify-between gap-2 transition"
+                          className="p-2.5 rounded-xl bg-white hover:bg-indigo-50/40 border border-slate-200 hover:border-indigo-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition"
                         >
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
                               {res.name}
                             </div>
@@ -6814,9 +8108,61 @@
                               📊 구글맵 인당 평균: {sp.label} (약 {formatKRW(sp.avgYen * exchangeRate)})
                             </div>
                           </div>
-                          <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500 text-white text-xs font-black shrink-0 shadow-sm">
-                            ＋ 선택
-                          </span>
+                          <div className="flex items-center gap-1 shrink-0 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                addPinToMap({
+                                  name: res.name,
+                                  category: customCategory,
+                                  address: res.address,
+                                  lat: res.lat,
+                                  lng: res.lng,
+                                  spendInfo: sp,
+                                  insertPosition: "start"
+                                })
+                              }
+                              className="px-2 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-extrabold transition"
+                              title="해당 Day 맨 앞(시작 위치)에 추가"
+                            >
+                              🌅 시작으로 추가
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                addPinToMap({
+                                  name: res.name,
+                                  category: customCategory,
+                                  address: res.address,
+                                  lat: res.lat,
+                                  lng: res.lng,
+                                  spendInfo: sp,
+                                  insertPosition: "end"
+                                })
+                              }
+                              className="px-2 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-extrabold transition"
+                              title="해당 Day 맨 뒤(종료 위치)에 추가"
+                            >
+                              🏁 종료로 추가
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                addPinToMap({
+                                  name: res.name,
+                                  category: customCategory,
+                                  address: res.address,
+                                  lat: res.lat,
+                                  lng: res.lng,
+                                  spendInfo: sp,
+                                  insertPosition: "course"
+                                })
+                              }
+                              className="px-2.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-black shadow-sm transition"
+                            >
+                              ＋ 코스에 추가
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -6825,24 +8171,45 @@
 
                 <div>
                   <div className="text-xs font-bold text-slate-500 mb-1.5">
-                    ⭐️ 자주 찾는 인기 추천 장소 빠른 추가
+                    ⭐️ 자주 찾는 인기 추천 장소 빠른 추가 (시작 / 종료 / 코스에 추가)
                   </div>
-                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                  <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
                     {PRESET_PLACES.map((p, i) => {
                       const sp = estimateGoogleAvgSpend(p.name, p.category);
                       return (
                         <div
                           key={i}
-                          onClick={() => addPinToMap({ ...p, spendInfo: sp })}
-                          className="p-2.5 rounded-xl bg-white hover:bg-indigo-50/50 border border-slate-200 cursor-pointer flex items-center justify-between transition"
+                          className="p-2.5 rounded-xl bg-white hover:bg-indigo-50/40 border border-slate-200 flex items-center justify-between gap-2 transition"
                         >
-                          <div>
-                            <div className="text-xs font-extrabold text-slate-900">{p.name}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-extrabold text-slate-900 truncate">{p.name}</div>
                             <div className="text-[10px] text-slate-500">
                               {p.category} · 인당 평균 {sp.label}
                             </div>
                           </div>
-                          <span className="text-xs font-bold text-indigo-600">추가 ＋</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => addPinToMap({ ...p, spendInfo: sp, insertPosition: "start" })}
+                              className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[10px] font-extrabold transition"
+                            >
+                              시작으로
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => addPinToMap({ ...p, spendInfo: sp, insertPosition: "end" })}
+                              className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-extrabold transition"
+                            >
+                              종료로
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => addPinToMap({ ...p, spendInfo: sp, insertPosition: "course" })}
+                              className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-extrabold transition"
+                            >
+                              코스에 ＋
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
