@@ -2043,42 +2043,52 @@
         const fallbackDayId = fallbackDay.id;
         const fallbackDayLabel = fallbackDay.label;
 
-        setPins((prev) =>
-          prev.map((p) =>
-            (p.dayId || "day-1") === dayId
-              ? { ...p, dayId: fallbackDayId, dayLabel: fallbackDayLabel }
-              : p
-          )
+        const prevSnapshot = [...pins];
+        const nextPins = pins.map((p) =>
+          (p.dayId || "day-1") === dayId
+            ? { ...p, dayId: fallbackDayId, dayLabel: fallbackDayLabel }
+            : p
         );
+        const nextDays = days.filter((d) => d.id !== dayId);
 
-        setDays((prev) => prev.filter((d) => d.id !== dayId));
+        setDays(nextDays);
         if (selectedDayId === dayId) {
           setSelectedDayId(fallbackDayId);
         }
         setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 });
-        showToast(`📅 ${dayLabel}의 장소들을 ${fallbackDayLabel}로 이동하고 Day를 삭제했습니다.`);
+        commitPinsWithRollback(
+          nextPins,
+          prevSnapshot,
+          `📅 ${dayLabel}의 장소들을 ${fallbackDayLabel}로 이동하고 Day를 삭제했습니다.`
+        );
       };
 
       const handleDeletePinsAndDropDay = () => {
         const { dayId, dayLabel, pinCount } = dayDeleteModal;
         const fallbackDay = days.find((d) => d.id !== dayId) || { id: "day-1", label: "Day 1" };
 
-        setPins((prev) => prev.filter((p) => (p.dayId || "day-1") !== dayId));
-        setDays((prev) => prev.filter((d) => d.id !== dayId));
+        const prevSnapshot = [...pins];
+        const nextPins = pins.filter((p) => (p.dayId || "day-1") !== dayId);
+        const nextDays = days.filter((d) => d.id !== dayId);
+
+        setDays(nextDays);
         if (selectedDayId === dayId) {
           setSelectedDayId(fallbackDay.id);
         }
         setDayDeleteModal({ isOpen: false, dayId: "", dayLabel: "", pinCount: 0 });
-        showToast(`🗑️ ${dayLabel} 및 등록된 장소 ${pinCount}곳을 삭제했습니다.`);
+        commitPinsWithRollback(
+          nextPins,
+          prevSnapshot,
+          `🗑️ ${dayLabel} 및 등록된 장소 ${pinCount}곳을 삭제했습니다.`
+        );
       };
 
       const handleChangePinDay = (pinId, dayId, dayLabel) => {
-        setPins((prev) =>
-          prev.map((p) =>
-            p.id === pinId ? { ...p, dayId, dayLabel: dayLabel || dayId } : p
-          )
+        const prevSnapshot = [...pins];
+        const nextPins = pins.map((p) =>
+          p.id === pinId ? { ...p, dayId, dayLabel: dayLabel || dayId } : p
         );
-        showToast("📅 일차가 변경되었습니다.");
+        commitPinsWithRollback(nextPins, prevSnapshot, "📅 일차가 변경되었습니다.");
       };
 
       // =========================================================================
@@ -2503,7 +2513,7 @@
       const [banRemainingSec, setBanRemainingSec] = useState(0);
       const [detectedClientIp, setDetectedClientIp] = useState("");
 
-      // 👑 관리자 권한 페이지 & 🎟️ 초대 코드 관리 상태
+      // 👑 관리자 권한 페이지 & 보안 비밀번호 관리 상태
       const [showAdminAuthBox, setShowAdminAuthBox] = useState(false);
       const [adminKeyInput, setAdminKeyInput] = useState("");
       const [verifiedAdminKey, setVerifiedAdminKey] = useState("");
@@ -2512,15 +2522,21 @@
       const [adminBannedIps, setAdminBannedIps] = useState([]);
       const [adminNewPasswordInput, setAdminNewPasswordInput] = useState("");
       const [adminNewPasswordLabel, setAdminNewPasswordLabel] = useState("");
+      const [adminNewAdminPasswordInput, setAdminNewAdminPasswordInput] = useState("");
+      const [hasCustomAdminPassword, setHasCustomAdminPassword] = useState(false);
       const [adminFeedbackMsg, setAdminFeedbackMsg] = useState("");
+      const pinPushDebounceTimerRef = useRef(null);
 
-      // 🎟️ 초대 코드 리스트 · 메모(이름) · 활성/비활성 관리 상태
-      const [inviteTickets, setInviteTickets] = useState([]);
-      const [newInviteLabel, setNewInviteLabel] = useState("");
-      const [newInviteCustomCode, setNewInviteCustomCode] = useState("");
-      const [editingInviteId, setEditingInviteId] = useState(null);
-      const [editingInviteLabel, setEditingInviteLabel] = useState("");
-      const [isInviteBusy, setIsInviteBusy] = useState(false);
+      // ☁️ 핀 변경(이름/메모/todos/예산) 단기 디바운스(300~500ms) 클라우드 자동 저장
+      const scheduleDebouncedPinPush = (delayMs = 400) => {
+        if (pinPushDebounceTimerRef.current) {
+          clearTimeout(pinPushDebounceTimerRef.current);
+        }
+        setSyncStatus("local_saved");
+        pinPushDebounceTimerRef.current = setTimeout(() => {
+          pushCloudData(latestStateRef.current, false);
+        }, delayMs);
+      };
 
       // ⏱️ IP 일시 잠금 카운트다운 타이머 (1초마다 감소, 0초 도달 시 자동 잠금 해제)
       useEffect(() => {
@@ -2530,7 +2546,7 @@
             if (prev <= 1) {
               setIsIpBanned(false);
               setRemainingAttempts(5);
-              setEntryErrorMsg("🔓 일시 잠금이 자동 해제되었습니다. 초대 코드나 비밀번호를 입력해주세요.");
+              setEntryErrorMsg("🔓 일시 잠금이 자동 해제되었습니다. 접속 비밀번호를 입력해주세요. (초기: 0000)");
               return 0;
             }
             return prev - 1;
@@ -2741,7 +2757,24 @@
           ) {
             pushCloudData({ ...currentLocal, forceOverwrite: true }, true);
           } else {
-            setPins(remotePins);
+            // 원격에 핀이 있는 경우: 방금 추가된 로컬 핀이 아직 서버에 없다면 스마트 병합 후 재push
+            const localPins = Array.isArray(currentLocal.pins) ? currentLocal.pins : [];
+            const localOnlyPins = localPins.filter(
+              (lp) => !remotePins.some((rp) => String(rp.id) === String(lp.id))
+            );
+            if (localOnlyPins.length > 0 && !remote.explicitlyCleared) {
+              const mergedPins = [...remotePins, ...localOnlyPins];
+              setPins(mergedPins);
+              try {
+                localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(mergedPins));
+              } catch {}
+              pushCloudData({ ...currentLocal, pins: mergedPins, forceOverwrite: true }, false);
+            } else {
+              setPins(remotePins);
+              try {
+                localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(remotePins));
+              } catch {}
+            }
             if (remotePins.length > 0) {
               setSelectedPinId((prevId) =>
                 remotePins.some((p) => p.id === prevId) ? prevId : remotePins[0].id
@@ -2834,12 +2867,6 @@
         return `${String(m).padStart(2, "0")}분 ${String(s).padStart(2, "0")}초`;
       };
 
-      const buildInviteShareUrl = (ticket) => {
-        return `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(
-          ticket
-        )}`;
-      };
-
       const copyTextWithFallback = async (text, toastSuccess, promptTitle) => {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           try {
@@ -2856,7 +2883,9 @@
         if (!data || typeof data !== "object") return;
         if (Array.isArray(data.accessEntries)) setAdminAccessEntries(data.accessEntries);
         if (Array.isArray(data.bannedIps)) setAdminBannedIps(data.bannedIps);
-        if (Array.isArray(data.inviteTickets)) setInviteTickets(data.inviteTickets);
+        if (typeof data.hasCustomAdminPassword === "boolean") {
+          setHasCustomAdminPassword(data.hasCustomAdminPassword);
+        }
       };
 
       const fetchCloudData = async (isManual = false, pinOverride = "") => {
@@ -2893,7 +2922,7 @@
           }
 
           if (res.status === 401) {
-            // 저장된 비밀번호가 변경되었거나 사용 중인 초대 코드가 비활성화된 경우
+            // 저장된 비밀번호가 변경되었거나 세션이 만료된 경우
             setSavedAuthPin("");
             savedAuthPinRef.current = "";
             setIsEntryAuthenticated(false);
@@ -3031,6 +3060,8 @@
 
           if (reqSeq !== pushSeqRef.current) return true;
 
+          const resJson = await res.json().catch(() => ({}));
+
           if (res.status === 401 || res.status === 403) {
             setSyncStatus("offline");
             clearNoteSaveTimer();
@@ -3039,40 +3070,50 @@
               setNoteSaveStatus("idle");
             }, 4500);
 
-            const errJson = await res.json().catch(() => ({}));
-            if (errJson.ipBanned) {
+            if (resJson.ipBanned) {
               setIsIpBanned(true);
-              setBanRemainingSec(Number(errJson.banRemainingSeconds) || 600);
-              if (errJson.clientIp) setDetectedClientIp(errJson.clientIp);
+              setBanRemainingSec(Number(resJson.banRemainingSeconds) || 600);
+              if (resJson.clientIp) setDetectedClientIp(resJson.clientIp);
             }
-            if (errJson.requiresAuth || errJson.ipBanned) {
+            if (resJson.requiresAuth || resJson.ipBanned) {
               setSavedAuthPin("");
               savedAuthPinRef.current = "";
               setIsEntryAuthenticated(false);
               setEntryErrorMsg(
-                errJson.error || "인증이 만료되었거나 초대 코드가 비활성화되었습니다."
+                resJson.error || "인증이 만료되었습니다. 다시 비밀번호를 입력해주세요."
               );
             }
             return false;
           }
 
           if (res.ok) {
-            setLastSyncedTime(
-              new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
-            );
-            setSyncStatus("synced");
+            const isDbSynced = resJson.dbSynced !== false;
+            if (isDbSynced) {
+              setLastSyncedTime(
+                new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+              );
+              setSyncStatus("synced");
 
-            // 📝 클라우드 동기화 완료 피드백 (2.5초 후 자동 idle)
-            clearNoteSaveTimer();
-            setNoteSaveStatus("saved");
-            noteSaveTimerRef.current = setTimeout(() => {
-              setNoteSaveStatus("idle");
-            }, 2500);
+              // 📝 클라우드 동기화 완료 피드백 (2.5초 후 자동 idle)
+              clearNoteSaveTimer();
+              setNoteSaveStatus("saved");
+              noteSaveTimerRef.current = setTimeout(() => {
+                setNoteSaveStatus("idle");
+              }, 2500);
 
-            if (isForce) {
-              showToast("☁️ 현재 기기의 일정을 클라우드에 강제 동기화했습니다!");
+              if (isForce) {
+                showToast("☁️ 현재 기기의 일정을 클라우드에 강제 동기화했습니다!");
+              }
+              return true;
+            } else {
+              setSyncStatus("offline");
+              clearNoteSaveTimer();
+              setNoteSaveStatus("error");
+              noteSaveTimerRef.current = setTimeout(() => {
+                setNoteSaveStatus("idle");
+              }, 4500);
+              return false;
             }
-            return true;
           } else {
             setSyncStatus("offline");
             clearNoteSaveTimer();
@@ -3097,7 +3138,7 @@
         }
       };
 
-      // 🛡️ 단일 소스 오브 트루스(pins) 낙관적 업데이트 + 클라우드 저장 실패 시 자동 롤백 헬퍼
+      // 🛡️ 단일 소스 오브 트루스(pins) 낙관적 업데이트 + 2~3회 지수 백오프 재시도 후 자동 롤백 헬퍼
       const commitPinsWithRollback = async (nextPins, prevPinsSnapshot, successToastMsg) => {
         const sanitizedNext = sanitizePinList(nextPins);
         const backupPins = Array.isArray(prevPinsSnapshot)
@@ -3114,7 +3155,7 @@
           showToast(successToastMsg);
         }
 
-        const ok = await pushCloudData(
+        let ok = await pushCloudData(
           {
             ...latestStateRef.current,
             pins: sanitizedNext
@@ -3122,12 +3163,36 @@
           false
         );
 
-        if (ok === false) {
+        if (!ok) {
+          // 1차 지수 백오프 재시도 (500ms)
+          await new Promise((r) => setTimeout(r, 500));
+          ok = await pushCloudData(
+            {
+              ...latestStateRef.current,
+              pins: sanitizedNext
+            },
+            false
+          );
+        }
+
+        if (!ok) {
+          // 2차 지수 백오프 재시도 (1200ms)
+          await new Promise((r) => setTimeout(r, 1200));
+          ok = await pushCloudData(
+            {
+              ...latestStateRef.current,
+              pins: sanitizedNext
+            },
+            false
+          );
+        }
+
+        if (!ok) {
           setPins(backupPins);
           try {
             localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(backupPins));
           } catch {}
-          showToast("⚠️ 클라우드 저장에 실패하여 변경 전 상태로 되돌렸습니다.");
+          showToast("⚠️ 클라우드 저장에 실패하여 이전 상태로 되돌렸습니다. 네트워크를 확인해주세요.");
           return false;
         }
         return true;
@@ -3150,7 +3215,7 @@
             setIsIpBanned(false);
             setBanRemainingSec(0);
             setRemainingAttempts(data.remainingAttempts || 5);
-            setEntryErrorMsg("🔓 잠금이 해제되었습니다! 초대 코드 또는 비밀번호를 입력해주세요.");
+            setEntryErrorMsg("🔓 잠금이 해제되었습니다! 비밀번호를 입력해주세요. (초기: 0000)");
             showToast("🔓 IP 잠금이 해제되었습니다!");
           } else if (data.ipBanned) {
             const rem = Number(data.banRemainingSeconds) || banRemainingSec;
@@ -3162,12 +3227,12 @@
         }
       };
 
-      // 🔑 시작 페이지 입장 검증 핸들러 (비밀번호 · 단축 초대코드 JP-XXXX · 초대링크 URL 통합 지원)
+      // 🔑 시작 페이지 입장 검증 핸들러 (접속 비밀번호 / 관리자 마스터 키)
       const handleEntryLogin = async (e, directPassword = null) => {
         if (e && e.preventDefault) e.preventDefault();
         const candidate = (directPassword !== null ? directPassword : entryPasswordInput).trim();
         if (!candidate) {
-          setEntryErrorMsg("접속 비밀번호 또는 초대 코드(예: JP-1234)를 입력해주세요.");
+          setEntryErrorMsg("접속 비밀번호를 입력해주세요. (초기: 0000)");
           return;
         }
         setEntryErrorMsg("");
@@ -3220,12 +3285,6 @@
               setVerifiedAdminKey(candidate);
               setShowAdminPage(true);
               showToast("👑 관리자 권한으로 인증되어 관리자 페이지가 열렸습니다!");
-            } else if (data.usedInvite) {
-              showToast(
-                `🎟️ 초대 코드(${data.inviteCode || "인증됨"} · ${
-                  data.inviteLabel || "동행인"
-                })로 입장했습니다!`
-              );
             } else {
               showToast("🔓 비밀번호 인증 완료! 환영합니다.");
             }
@@ -3234,12 +3293,12 @@
               setIsIpBanned(true);
               setBanRemainingSec(Number(data.banRemainingSeconds) || 600);
               setRemainingAttempts(0);
-            } else if (typeof data.remainingAttempts === "number") {
+            } else if (typeof data.remainingAttempts === number) {
               setRemainingAttempts(data.remainingAttempts);
             }
             setEntryErrorMsg(
               data.error ||
-                "비밀번호 또는 초대 코드가 일치하지 않습니다. (5회 실패 시 10분간 일시 잠금됩니다)"
+                "비밀번호가 일치하지 않습니다. (5회 실패 시 10분간 일시 잠금됩니다)"
             );
           }
         } catch {
@@ -3402,221 +3461,16 @@
         setIsEntryAuthenticated(false);
         setShowResetModal(false);
         setShowAdminPage(false);
-        showToast("🔒 화면이 잠겼습니다. 다시 입장하려면 비밀번호 또는 초대 코드를 입력해주세요.");
+        showToast("🔒 화면이 잠겼습니다. 다시 입장하려면 비밀번호를 입력해주세요.");
       };
 
-      // 🎟️ 서버에서 발급된 초대 코드 리스트 및 잠긴 IP 목록 최신 조회
-      const fetchInviteTicketsList = async () => {
-        const activePin = (savedAuthPinRef.current || "").trim();
-        if (!activePin && !verifiedAdminKey) return;
-        try {
-          const res = await fetch("/api/sync", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": CSRF_HEADER_VALUE,
-              "X-Planner-Pin": encodeURIComponent(activePin)
-            },
-            body: JSON.stringify({
-              action: "listInviteTickets",
-              adminKey: verifiedAdminKey || ""
-            })
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            syncAdminAndInviteLists(data);
-          }
-        } catch {}
-      };
-
-      useEffect(() => {
-        if (showResetModal || showAdminPage) {
-          fetchInviteTicketsList();
-        }
-      }, [showResetModal, showAdminPage]);
-
-      // 🎟️ 새 초대 코드 + 원클릭 초대 링크 발급 (이름/메모 표기 지원)
-      const handleGenerateInviteTicket = async (e) => {
-        if (e && e.preventDefault) e.preventDefault();
-        if (isInviteBusy) return;
-        setIsInviteBusy(true);
-        try {
-          const customLabel = newInviteLabel.trim();
-          const customCode = newInviteCustomCode.trim();
-          const res = await fetch("/api/sync", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": CSRF_HEADER_VALUE,
-              "X-Planner-Pin": encodeURIComponent(savedAuthPinRef.current || "")
-            },
-            body: JSON.stringify({
-              action: "createInviteCode",
-              adminKey: verifiedAdminKey || "",
-              label: customLabel || `동행인 초대 #${inviteTickets.length + 1}`,
-              customCode
-            })
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ticket) {
-            syncAdminAndInviteLists(data);
-            setNewInviteLabel("");
-            setNewInviteCustomCode("");
-            const shareUrl = buildInviteShareUrl(data.ticket);
-            const codeText = data.code || "";
-            const labelText = data.invite?.label || customLabel || "동행인 초대";
-            const shareText = `[✈️ ${tripTitle || "여행 플래너"} 초대장 - ${labelText}]\n• 원클릭 바로가기: ${shareUrl}\n• 초대 코드 직접 입력: ${codeText}`;
-            await copyTextWithFallback(
-              shareText,
-              `🎟️ '${labelText}' 초대 코드(${codeText})와 링크가 생성·복사되었습니다!`,
-              "아래 초대 링크와 초대 코드를 복사하여 지인에게 전달하세요:"
-            );
-          } else {
-            showToast(data.error || "⚠️ 초대 코드 생성에 실패했습니다.");
-          }
-        } catch {
-          showToast("⚠️ 네트워크 오류로 초대 코드를 생성하지 못했습니다.");
-        } finally {
-          setIsInviteBusy(false);
-        }
-      };
-
-      // 🔘 초대 코드 활성화 / 비활성화 원클릭 토글
-      const handleToggleInviteTicket = async (inviteItem) => {
-        if (!inviteItem || isInviteBusy) return;
-        const nextActive = inviteItem.active === false;
-        // 즉각적인 UI 반응 (낙관적 업데이트)
-        setInviteTickets((prev) =>
-          prev.map((it) => (it.id === inviteItem.id ? { ...it, active: nextActive } : it))
-        );
-        try {
-          const res = await fetch("/api/sync", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": CSRF_HEADER_VALUE,
-              "X-Planner-Pin": encodeURIComponent(savedAuthPinRef.current || "")
-            },
-            body: JSON.stringify({
-              action: "toggleInviteTicket",
-              adminKey: verifiedAdminKey || "",
-              inviteId: inviteItem.id,
-              active: nextActive
-            })
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            syncAdminAndInviteLists(data);
-            showToast(
-              data.message ||
-                (nextActive
-                  ? `🟢 '${inviteItem.label}' 코드가 활성화되었습니다.`
-                  : `⚪ '${inviteItem.label}' 코드가 비활성화되었습니다.`)
-            );
-          } else {
-            fetchInviteTicketsList();
-            showToast(data.error || "⚠️ 상태 변경에 실패했습니다.");
-          }
-        } catch {
-          fetchInviteTicketsList();
-          showToast("⚠️ 서버 통신 오류로 상태를 변경하지 못했습니다.");
-        }
-      };
-
-      // 🏷️ 초대 코드 메모(이름) 수정 저장
-      const handleSaveInviteLabel = async (inviteId) => {
-        const cleanLabel = editingInviteLabel.trim();
-        if (!cleanLabel) {
-          showToast("⚠️ 표기할 이름(메모)을 입력해주세요.");
+      // 👑 관리자: 관리자 마스터 비밀번호 변경 (커스텀 설정 시 기본 0000 비활성화)
+      const handleAdminSaveAdminPassword = async () => {
+        const newAdminPw = adminNewAdminPasswordInput.trim();
+        if (newAdminPw.length < 4) {
+          setAdminFeedbackMsg("⚠️ 새 관리자 비밀번호는 최소 4자 이상 입력해주세요.");
           return;
         }
-        try {
-          const res = await fetch("/api/sync", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": CSRF_HEADER_VALUE,
-              "X-Planner-Pin": encodeURIComponent(savedAuthPinRef.current || "")
-            },
-            body: JSON.stringify({
-              action: "updateInviteLabel",
-              adminKey: verifiedAdminKey || "",
-              inviteId,
-              label: cleanLabel
-            })
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            syncAdminAndInviteLists(data);
-            setEditingInviteId(null);
-            setEditingInviteLabel("");
-            showToast(data.message || `🏷️ 메모가 '${cleanLabel}'(으)로 변경되었습니다.`);
-          } else {
-            showToast(data.error || "⚠️ 메모 수정에 실패했습니다.");
-          }
-        } catch {
-          showToast("⚠️ 메모 수정 중 네트워크 오류가 발생했습니다.");
-        }
-      };
-
-      // 🗑️ 초대 코드 영구 삭제(폐기)
-      const handleDeleteInviteTicket = async (inviteItem) => {
-        if (!inviteItem) return;
-        try {
-          const res = await fetch("/api/sync", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": CSRF_HEADER_VALUE,
-              "X-Planner-Pin": encodeURIComponent(savedAuthPinRef.current || "")
-            },
-            body: JSON.stringify({
-              action: "deleteInviteTicket",
-              adminKey: verifiedAdminKey || "",
-              inviteId: inviteItem.id
-            })
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            syncAdminAndInviteLists(data);
-            showToast(data.message || "🗑️ 초대 코드가 삭제되었습니다.");
-          } else {
-            showToast(data.error || "⚠️ 초대 코드 삭제에 실패했습니다.");
-          }
-        } catch {
-          showToast("⚠️ 삭제 중 네트워크 오류가 발생했습니다.");
-        }
-      };
-
-      // 📋 초대 코드 / 원클릭 링크 / 카톡 안내문 복사
-      const handleCopyInviteItem = async (inviteItem, mode = "link") => {
-        if (!inviteItem) return;
-        const shareUrl = buildInviteShareUrl(inviteItem.ticket);
-        if (mode === "code") {
-          await copyTextWithFallback(
-            inviteItem.code,
-            `📋 '${inviteItem.label}' 초대 코드(${inviteItem.code})가 복사되었습니다!`,
-            "초대 코드를 복사하세요:"
-          );
-        } else if (mode === "bundle") {
-          const bundle = `[✈️ ${tripTitle || "여행 플래너"} 초대장 - ${inviteItem.label}]\n• 원클릭 바로가기: ${shareUrl}\n• 시작화면 초대코드 입력: ${inviteItem.code}`;
-          await copyTextWithFallback(
-            bundle,
-            `💬 '${inviteItem.label}' 카톡 전달용 링크+코드 세트가 복사되었습니다!`,
-            "아래 안내 문구를 복사하여 전달하세요:"
-          );
-        } else {
-          await copyTextWithFallback(
-            shareUrl,
-            `🔗 '${inviteItem.label}' 원클릭 초대 링크가 복사되었습니다!`,
-            "원클릭 초대 링크를 복사하세요:"
-          );
-        }
-      };
-
-      // 🎫 난수 초대 티켓 자동 수락 및 로그인
-      const handleRedeemInviteTicket = async (ticket) => {
-        setIsEntryChecking(true);
         try {
           const res = await fetch("/api/sync", {
             method: "POST",
@@ -3625,69 +3479,34 @@
               "X-Requested-With": CSRF_HEADER_VALUE
             },
             body: JSON.stringify({
-              action: "redeemInviteTicket",
-              ticket
+              action: "adminSetAdminPassword",
+              adminKey: verifiedAdminKey,
+              newAdminPassword: newAdminPw
             })
           });
           const data = await res.json().catch(() => ({}));
-          if (res.ok && data.authenticated) {
-            const sessionPin = `ticket:${data.ticket || ticket}`;
-            setSavedAuthPin(sessionPin);
-            savedAuthPinRef.current = sessionPin;
-            setIsIpBanned(false);
-            setBanRemainingSec(0);
-            setIsEntryAuthenticated(true);
-            setIsEntryChecking(false);
-            syncAdminAndInviteLists(data);
-            setSyncStatus("synced");
-            setNoteSaveStatus("idle");
-            setLastSyncedTime(
-              new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
-            );
-            if (data.cloudData && !data.cloudData.empty) {
-              applyRemotePayload(data.cloudData, false);
-            } else {
-              const currentLocal = latestStateRef.current;
-              if (hasLocalMeaningfulData(currentLocal)) {
-                pushCloudData({ ...currentLocal, forceOverwrite: true }, false);
-              }
+          if (res.ok && data.ok) {
+            setVerifiedAdminKey(newAdminPw);
+            setAdminNewAdminPasswordInput("");
+            setAdminFeedbackMsg(data.message || "👑 관리자 비밀번호가 성공적으로 변경되었습니다.");
+            showToast("👑 관리자 비밀번호가 성공적으로 변경되었습니다!");
+            if (data.hasCustomAdminPassword !== undefined) {
+              setHasCustomAdminPassword(data.hasCustomAdminPassword);
             }
-            isInitialCloudLoadedRef.current = true;
-            showToast(
-              `✨ '${data.label || "동행인"}' 초대 링크로 접속되었습니다! (자동 로그인 유지)`
-            );
           } else {
-            setIsEntryChecking(false);
-            setEntryErrorMsg(
-              data.error ||
-                "유효하지 않거나 비활성화된 초대 코드입니다. 초대 코드(JP-XXXX)나 비밀번호를 직접 입력해주세요."
-            );
+            setAdminFeedbackMsg(data.error || "⚠️ 관리자 비밀번호 변경에 실패했습니다.");
           }
         } catch {
-          setIsEntryChecking(false);
-          setEntryErrorMsg("⚠️ 초대 링크 확인 중 네트워크 오류가 발생했습니다.");
+          setAdminFeedbackMsg("⚠️ 서버 통신 중 오류가 발생했습니다.");
         }
       };
 
-      // 첫 실행 시: 1) URL 난수 초대 티켓/원클릭 패스키 자동 감지 -> 2) 저장된 기기 인증 확인 -> 3) 실시간 폴링 동기화
+      // 첫 실행 시: 저장된 기기 인증 확인 및 실시간 폴링 동기화
       useEffect(() => {
-        // 🚀 URL에서 지속 난수 초대 티켓(#invite=... 또는 ?invite=...) 자동 감지 및 자동 로그인
         try {
           const urlParams = new URLSearchParams(window.location.search);
           const hashStr = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
           const hashParams = new URLSearchParams(hashStr);
-
-          const incomingTicket =
-            urlParams.get("invite") ||
-            urlParams.get("ticket") ||
-            hashParams.get("invite") ||
-            hashParams.get("ticket");
-
-          if (incomingTicket) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-            handleRedeemInviteTicket(incomingTicket);
-            return;
-          }
 
           const incomingPass =
             urlParams.get("auth") ||
@@ -4697,21 +4516,15 @@
         const afterKm = getTotalRouteKm(optimized);
         const savedKm = Math.max(0, beforeKm - afterKm).toFixed(1);
 
-        setPins(optimized);
         setSelectedPinId(optimized[0].id);
-
         if (mapInstanceRef.current) {
           const bounds = L.latLngBounds(optimized.map((p) => [p.lat, p.lng]));
           mapInstanceRef.current.flyToBounds(bounds.pad(0.3), { duration: 0.9 });
         }
-
-        if (Number(savedKm) > 0) {
-          showToast(
-            `⚡ 최단 경로 재구성 완료! #1 '${optimized[0].name}' 기준 총 이동거리가 ${savedKm}km 단축되었습니다!`
-          );
-        } else {
-          showToast(`⚡ 현재 코스가 이미 가장 효율적인 최단 동선입니다!`);
-        }
+        const optMsg = Number(savedKm) > 0
+          ? `⚡ 최단 경로 재구성 완료! #1 '${optimized[0].name}' 기준 총 이동거리가 ${savedKm}km 단축되었습니다!`
+          : "⚡ 현재 코스가 이미 가장 효율적인 최단 동선입니다!";
+        commitPinsWithRollback(optimized, pins, optMsg);
       };
 
       const handleApplyGoogleAvgSpend = (pin, multiplierPeople = 1) => {
@@ -4728,9 +4541,12 @@
           bought: false
         };
 
-        setPins((prev) =>
-          prev.map((p) => (p.id === pin.id ? { ...p, items: [...p.items, newItem] } : p))
-        );
+        const nextSpendPins = pins.map((p) => (p.id === pin.id ? { ...p, items: [...p.items, newItem] } : p));
+        setPins(nextSpendPins);
+        try {
+          localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextSpendPins));
+        } catch {}
+        scheduleDebouncedPinPush(300);
         showToast(
           `💴 평균 지출액 ${formatJPY(yenAmount)} (${formatKRW(krwAmount)})이 예산에 추가되었습니다!`
         );
@@ -4858,9 +4674,12 @@
         const currentPin = pins[currentIndex];
         const nextPin = pins[currentIndex + 1] || null;
 
-        setPins((prev) =>
-          prev.map((p) => (p.id === pinId ? { ...p, completed: true } : p))
-        );
+        const nextCompletePins = pins.map((p) => (p.id === pinId ? { ...p, completed: true } : p));
+        setPins(nextCompletePins);
+        try {
+          localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextCompletePins));
+        } catch {}
+        scheduleDebouncedPinPush(300);
 
         if (nextPin) {
           const tInfo = estimateTransitInfo(currentPin, nextPin);
@@ -5295,7 +5114,6 @@
 
       const handleUpdatePinNameInline = (pinId, newName) => {
         const cleanVal = String(newName ?? "").slice(0, 120);
-        setSyncStatus("local_saved");
         setPins((prev) => {
           const nextPins = prev.map((p) =>
             p.id === pinId
@@ -5316,11 +5134,11 @@
         if (editingPinId === pinId) {
           setEditNameText(cleanVal);
         }
+        scheduleDebouncedPinPush(400);
       };
 
       const handleClearPinName = (pinId, e) => {
         if (e && e.stopPropagation) e.stopPropagation();
-        setSyncStatus("local_saved");
         setPins((prev) => {
           const nextPins = prev.map((p) => (p.id === pinId ? { ...p, name: "" } : p));
           try {
@@ -5332,30 +5150,25 @@
           setEditNameText("");
         }
         setInlineEditingPinId(pinId);
+        scheduleDebouncedPinPush(400);
       };
 
       const handleSavePinEdit = (pinId) => {
         const trimmedName = editNameText.trim();
-        setSyncStatus("local_saved");
-        setPins((prev) => {
-          const nextPins = prev.map((p) =>
-            p.id === pinId
-              ? {
-                  ...p,
-                  name: trimmedName,
-                  category: editCategoryText,
-                  spendInfo: estimateGoogleAvgSpend(trimmedName || p.address || "", editCategoryText)
-                }
-              : p
-          );
-          try {
-            localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
-          } catch {}
-          return nextPins;
-        });
+        const prevSnapshot = [...pins];
+        const nextPins = pins.map((p) =>
+          p.id === pinId
+            ? {
+                ...p,
+                name: trimmedName,
+                category: editCategoryText,
+                spendInfo: estimateGoogleAvgSpend(trimmedName || p.address || "", editCategoryText)
+              }
+            : p
+        );
         setEditingPinId(null);
         setInlineEditingPinId(null);
-        showToast("✏️ 장소 정보가 수정되었습니다.");
+        commitPinsWithRollback(nextPins, prevSnapshot, "✏️ 장소 정보가 수정되었습니다.");
       };
 
       const handleAddItem = (e, targetPin = null) => {
@@ -5378,11 +5191,14 @@
           bought: false
         };
 
-        setPins((prev) =>
-          prev.map((p) =>
-            p.id === pinObj.id ? { ...p, items: [...p.items, newItem] } : p
-          )
+        const nextPins = pins.map((p) =>
+          p.id === pinObj.id ? { ...p, items: [...p.items, newItem] } : p
         );
+        setPins(nextPins);
+        try {
+          localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
+        } catch {}
+        scheduleDebouncedPinPush(300);
         setNewItemTitle("");
         setNewItemAmount("");
         showToast(`🛍️ '${newItem.title}' 예산 항목이 추가되었습니다.`);
@@ -5500,228 +5316,6 @@
         }
       };
 
-      // 🎟️ 초대 코드 · 링크 발급 및 활성/비활성 리스트 관리 패널 (설정 모달 & 관리자 페이지 공용)
-      const renderInviteManagerPanel = () => {
-        const activeCount = inviteTickets.filter((t) => t.active !== false).length;
-        return (
-          <div className="p-4 rounded-2xl bg-slate-50/95 border border-indigo-200/80 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                <span>🎟️</span>
-                <span>초대 코드 · 링크 발급 및 관리</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-100/90 px-2 py-0.5 rounded-full">
-                  활성 {activeCount} / 전체 {inviteTickets.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={fetchInviteTicketsList}
-                  title="목록 새로고침"
-                  className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 px-1.5 py-0.5 rounded-lg hover:bg-white transition"
-                >
-                  🔄
-                </button>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-slate-600 leading-relaxed">
-              지인별로 <b>이름(메모)</b>을 적어 초대 코드를 만들면, 언제든 리스트에서 <b>활성화/비활성화</b>를 켜고 끌 수 있습니다. 지인은 <b>원클릭 링크</b>를 누르거나 시작 화면에 <b>초대 코드(예: JP-XXXX)</b>를 직접 입력해 입장할 수 있습니다.
-            </p>
-
-            {/* 새 초대 코드 발급 폼 */}
-            <form onSubmit={handleGenerateInviteTicket} className="space-y-2 bg-white/90 p-3 rounded-xl border border-slate-200/80">
-              <div className="text-[11px] font-extrabold text-slate-800">
-                ➕ 새 초대 코드 · 링크 만들기
-              </div>
-              <div className="flex flex-col sm:flex-row gap-1.5">
-                <input
-                  type="text"
-                  spellCheck={false}
-                  value={newInviteLabel}
-                  onChange={(e) => setNewInviteLabel(e.target.value)}
-                  placeholder="누구에게 보낼 코드인가요? (예: 지인 민수, 다원이 친구)"
-                  className="modal-input text-xs py-2 flex-1"
-                />
-                <input
-                  type="text"
-                  spellCheck={false}
-                  value={newInviteCustomCode}
-                  onChange={(e) => setNewInviteCustomCode(e.target.value)}
-                  placeholder="코드 지정(선택, 자동생성)"
-                  className="modal-input text-xs py-2 sm:w-36 font-mono"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={isInviteBusy}
-                className="w-full py-2.5 px-3 rounded-xl btn-primary text-xs font-black shadow-sm transition flex items-center justify-center gap-1.5"
-              >
-                <span>🎟️</span>
-                <span>
-                  {isInviteBusy
-                    ? "초대 코드 발급 중..."
-                    : "초대 코드 + 원클릭 링크 발급 및 자동 복사"}
-                </span>
-              </button>
-            </form>
-
-            {/* 발급된 초대 코드 리스트 */}
-            <div className="space-y-2">
-              <div className="text-[11px] font-extrabold text-slate-700 flex items-center justify-between px-0.5">
-                <span>📋 발급된 초대 코드 목록 ({inviteTickets.length}개)</span>
-                <span className="text-[10px] text-slate-500 font-semibold">
-                  비활성화 시 즉시 접속 차단
-                </span>
-              </div>
-
-              {inviteTickets.length === 0 ? (
-                <div className="p-3.5 rounded-xl bg-white/80 border border-dashed border-slate-300 text-center text-[11px] text-slate-500">
-                  아직 발급된 초대 코드가 없습니다. 위에서 지인 이름(메모)을 입력해 첫 초대 코드를 발급해보세요!
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
-                  {inviteTickets.map((item) => {
-                    const isActive = item.active !== false;
-                    const isEditing = editingInviteId === item.id;
-                    return (
-                      <div
-                        key={item.id}
-                        className={`p-3 rounded-xl border transition space-y-2 ${
-                          isActive
-                            ? "bg-white border-slate-200 shadow-2xs"
-                            : "bg-slate-100/80 border-slate-300/80 opacity-80"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            {isEditing ? (
-                              <div className="flex items-center gap-1.5">
-                                <input
-                                  type="text"
-                                  spellCheck={false}
-                                  value={editingInviteLabel}
-                                  onChange={(e) => setEditingInviteLabel(e.target.value)}
-                                  placeholder="메모/이름 입력"
-                                  className="modal-input text-xs py-1 px-2 flex-1"
-                                  autoFocus
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleSaveInviteLabel(item.id)}
-                                  className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-extrabold shrink-0"
-                                >
-                                  저장
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingInviteId(null);
-                                    setEditingInviteLabel("");
-                                  }}
-                                  className="px-2 py-1 rounded-lg bg-slate-200 text-slate-700 text-[11px] font-bold shrink-0"
-                                >
-                                  취소
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-xs font-black text-slate-900 truncate">
-                                  🏷️ {item.label}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingInviteId(item.id);
-                                    setEditingInviteLabel(item.label || "");
-                                  }}
-                                  className="text-[10px] font-bold text-indigo-600 hover:underline px-1.5 py-0.5 rounded bg-indigo-50"
-                                >
-                                  ✏️ 이름수정
-                                </button>
-                              </div>
-                            )}
-
-                            <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              <span
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-mono font-black border ${
-                                  isActive
-                                    ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                                    : "bg-slate-200 text-slate-500 border-slate-300 line-through"
-                                }`}
-                              >
-                                {item.code}
-                              </span>
-                              <span className="text-[10px] text-slate-500 font-semibold">
-                                접속 {item.useCount || 0}회
-                                {item.lastUsedAt ? ` · 최근 ${item.lastUsedAt}` : " · 미사용"}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* 활성 / 비활성 토글 스위치 버튼 */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleInviteTicket(item)}
-                            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black shrink-0 border transition flex items-center gap-1 shadow-2xs ${
-                              isActive
-                                ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300"
-                                : "bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300"
-                            }`}
-                            title={
-                              isActive
-                                ? "클릭하면 이 초대 코드를 일시 비활성화합니다"
-                                : "클릭하면 이 초대 코드를 다시 활성화합니다"
-                            }
-                          >
-                            <span>{isActive ? "🟢 활성 ON" : "⚪ 비활성 OFF"}</span>
-                          </button>
-                        </div>
-
-                        {/* 하단 복사 및 삭제 액션 바 */}
-                        <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-100">
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={() => handleCopyInviteItem(item, "bundle")}
-                              className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-extrabold transition"
-                            >
-                              💬 카톡 공유복사
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyInviteItem(item, "link")}
-                              className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-extrabold transition"
-                            >
-                              🔗 링크복사
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyInviteItem(item, "code")}
-                              className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-extrabold transition"
-                            >
-                              📋 코드({item.code})
-                            </button>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteInviteTicket(item)}
-                            className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-[10px] font-extrabold shrink-0 transition"
-                          >
-                            🗑️ 삭제
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      };
-
       // 👑 관리자 권한 페이지 모달 (관리자 전용 마스터 키 인증 성공 시에만 오픈)
       const renderAdminVaultModal = () => {
         if (!showAdminPage) return null;
@@ -5742,7 +5336,7 @@
                   <div>
                     <h3 className="modal-title">관리자 권한 페이지</h3>
                     <p className="text-[11px] text-amber-700 font-bold">
-                      초대 코드 활성·비활성 관리 · 비밀번호 지정 · 잠금 IP 해제
+                      접속 비밀번호 설정 · 관리자 비밀번호 변경 · 잠금 IP 해제
                     </p>
                   </div>
                 </div>
@@ -5761,8 +5355,35 @@
                 </div>
               )}
 
-              {/* 🎟️ 초대 코드 · 링크 발급 및 활성/비활성 리스트 관리 */}
-              {renderInviteManagerPanel()}
+              {/* 👑 관리자 마스터 비밀번호 변경 */}
+              <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-3">
+                <div className="text-xs font-black text-amber-900 flex items-center justify-between">
+                  <span>👑 관리자 마스터 비밀번호 변경</span>
+                  <span className="text-[10px] text-amber-700 font-extrabold bg-amber-200/80 px-2 py-0.5 rounded-full">
+                    {hasCustomAdminPassword ? "커스텀 비밀번호 사용 중" : "초기 비밀번호: 0000"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  관리자 권한 페이지에 접근할 수 있는 관리자 비밀번호를 변경합니다. 새 비밀번호를 설정하면 초기 비밀번호(0000)는 자동으로 비활성화됩니다.
+                </p>
+                <div className="space-y-2">
+                  <input
+                    type="password"
+                    spellCheck={false}
+                    value={adminNewAdminPasswordInput}
+                    onChange={(e) => setAdminNewAdminPasswordInput(e.target.value)}
+                    placeholder="새 관리자 비밀번호 입력 (4자 이상)"
+                    className="modal-input text-xs py-2 font-bold"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAdminSaveAdminPassword}
+                    className="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs shadow-sm transition"
+                  >
+                    👑 관리자 비밀번호 변경하기
+                  </button>
+                </div>
+              </div>
 
               {/* 1. 새 비밀번호 지정 / 추가 */}
               <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3">
@@ -5908,7 +5529,7 @@
       };
 
       // =========================================================================
-      // 🔐 시작 페이지: 비밀번호 또는 초대 코드를 입력한 사람만 열리는 보안 게이트
+      // 🔐 시작 페이지: 비밀번호를 입력한 사람만 열리는 보안 게이트
       // =========================================================================
       if (!isEntryAuthenticated) {
         return (
@@ -5963,7 +5584,7 @@
                     <input
                       type={showEntryPinText ? "text" : "password"}
                       className="modal-input pr-14"
-                      placeholder="접속 비밀번호 또는 초대 코드 (예: JP-1234)"
+                      placeholder="접속 비밀번호 (초기: 0000)"
                       value={entryPasswordInput}
                       onChange={(e) => setEntryPasswordInput(e.target.value)}
                       autoFocus
@@ -5985,7 +5606,7 @@
                   </button>
 
                   <p className="entry-hint">
-                    초대 코드(예: JP-XXXX) 또는 비밀번호 입력 · 5회 실패 시 10분간 일시 잠금
+                    초기 접속 비밀번호: <b>0000</b> · 5회 실패 시 10분간 일시 잠금
                     {remainingAttempts < 5 && remainingAttempts > 0 && (
                       <> · 남은 시도 {remainingAttempts}회</>
                     )}
@@ -6004,7 +5625,7 @@
                   className="text-xs font-semibold text-slate-500 hover:text-indigo-600 px-3 py-1.5 rounded-full hover:bg-white/60 transition inline-flex items-center gap-1.5"
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                  <span>초대 코드 · 비밀번호 · IP 잠금 관리 (관리자)</span>
+                  <span>비밀번호 · IP 잠금 관리 (관리자)</span>
                 </button>
 
                 {showAdminAuthBox && (
@@ -6013,15 +5634,15 @@
                     className="mt-3 p-3 rounded-2xl bg-white/90 border border-slate-200 space-y-2 text-left shadow-xs"
                   >
                     <div className="text-[11px] font-extrabold text-amber-600">
-                      🔑 관리자 전용 비밀번호 입력 (본인 IP 잠금도 즉시 해제됨)
+                      👑 관리자 비밀번호 입력 (초기: 0000 · IP 잠금 즉시 해제)
                     </div>
                     <div className="flex gap-1.5">
                       <input
                         type="password"
                         value={adminKeyInput}
                         onChange={(e) => setAdminKeyInput(e.target.value)}
-                        placeholder="관리자 비밀번호 입력"
-                        className="modal-input flex-1 py-1.5 text-xs"
+                        placeholder="관리자 비밀번호 (초기: 0000)"
+                        className="modal-input flex-1 py-1.5 text-xs font-bold"
                       />
                       <button
                         type="submit"
@@ -7071,13 +6692,16 @@
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      setPins((prev) =>
-                                        prev.map((p) =>
-                                          p.id === pin.id ? { ...p, completed: false } : p
-                                        )
-                                      )
-                                    }
+                                    onClick={() => {
+                                      const nextPins = pins.map((p) =>
+                                        p.id === pin.id ? { ...p, completed: false } : p
+                                      );
+                                      setPins(nextPins);
+                                      try {
+                                        localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
+                                      } catch {}
+                                      scheduleDebouncedPinPush(300);
+                                    }}
                                     className="px-2 py-1 rounded-xl bg-slate-100 text-slate-500 text-[11px] font-bold border border-slate-200 transition"
                                   >
                                     ↩ 취소
@@ -7237,9 +6861,14 @@
                                     value={pin.memo}
                                     onChange={(e) => {
                                       const val = e.target.value;
-                                      setPins((prev) =>
-                                        prev.map((p) => (p.id === pin.id ? { ...p, memo: val } : p))
-                                      );
+                                      setPins((prev) => {
+                                        const nextPins = prev.map((p) => (p.id === pin.id ? { ...p, memo: val } : p));
+                                        try {
+                                          localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
+                                        } catch {}
+                                        return nextPins;
+                                      });
+                                      scheduleDebouncedPinPush(400);
                                     }}
                                     placeholder="영업시간, 예약번호, 체크인 시간, 추천 메뉴 등을 자유롭게 적어두세요"
                                     className="w-full glass-input p-2.5 text-xs sm:text-sm font-medium text-slate-900 resize-none shadow-xs"
@@ -8230,7 +7859,7 @@
               >
                 <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                   <h3 className="font-extrabold text-base text-slate-900">
-                    ⚙️ 초대 코드 관리 · 동기화 및 보안 설정
+                    ⚙️ 데이터 동기화 및 보안 설정
                   </h3>
                   <button
                     onClick={() => setShowResetModal(false)}
@@ -8240,8 +7869,28 @@
                   </button>
                 </div>
 
-                {/* 🎟️ 초대 코드 · 링크 발급 및 활성/비활성 리스트 관리 */}
-                {renderInviteManagerPanel()}
+                {/* 👑 관리자 모달 바로가기 */}
+                <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                      <span>👑</span>
+                      <span>비밀번호 및 보안 관리</span>
+                    </div>
+                    <div className="text-[11px] text-amber-800 font-medium">
+                      접속 비밀번호 변경 · 관리자 비밀번호 변경
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowResetModal(false);
+                      setShowAdminPage(true);
+                    }}
+                    className="btn-primary text-xs py-1.5 px-3 shrink-0"
+                  >
+                    관리자 열기
+                  </button>
+                </div>
 
                 {/* 🚫 잠긴 IP 빠른 해제 (잠긴 IP가 있을 때 즉시 원터치 해제 지원) */}
                 {adminBannedIps.length > 0 && (
@@ -8407,9 +8056,14 @@
 
                 <button
                   onClick={() => {
-                    setPins((prev) => prev.map((p) => ({ ...p, completed: false })));
+                    const nextPins = pins.map((p) => ({ ...p, completed: false }));
+                    setPins(nextPins);
+                    try {
+                      localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(nextPins));
+                    } catch {}
                     setLastCompletedSegment(null);
                     setShowResetModal(false);
+                    scheduleDebouncedPinPush(300);
                     showToast("🔄 방문 완료(OK) 체크만 초기화되었습니다.");
                   }}
                   className="btn-ghost w-full text-left text-xs text-slate-700"
