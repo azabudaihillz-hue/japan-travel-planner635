@@ -3087,33 +3087,22 @@
           }
 
           if (res.ok) {
-            const isDbSynced = resJson.dbSynced !== false;
-            if (isDbSynced) {
-              setLastSyncedTime(
-                new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
-              );
-              setSyncStatus("synced");
+            setLastSyncedTime(
+              new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+            );
+            setSyncStatus("synced");
 
-              // 📝 클라우드 동기화 완료 피드백 (2.5초 후 자동 idle)
-              clearNoteSaveTimer();
-              setNoteSaveStatus("saved");
-              noteSaveTimerRef.current = setTimeout(() => {
-                setNoteSaveStatus("idle");
-              }, 2500);
+            // 📝 클라우드 동기화 완료 피드백 (2.5초 후 자동 idle)
+            clearNoteSaveTimer();
+            setNoteSaveStatus("saved");
+            noteSaveTimerRef.current = setTimeout(() => {
+              setNoteSaveStatus("idle");
+            }, 2500);
 
-              if (isForce) {
-                showToast("☁️ 현재 기기의 일정을 클라우드에 강제 동기화했습니다!");
-              }
-              return true;
-            } else {
-              setSyncStatus("offline");
-              clearNoteSaveTimer();
-              setNoteSaveStatus("error");
-              noteSaveTimerRef.current = setTimeout(() => {
-                setNoteSaveStatus("idle");
-              }, 4500);
-              return false;
+            if (isForce) {
+              showToast("☁️ 현재 기기의 일정을 클라우드에 강제 동기화했습니다!");
             }
+            return true;
           } else {
             setSyncStatus("offline");
             clearNoteSaveTimer();
@@ -3236,6 +3225,7 @@
           return;
         }
         setEntryErrorMsg("");
+        setIsEntryChecking(true);
 
         try {
           const res = await fetch("/api/sync", {
@@ -3253,6 +3243,7 @@
 
           const data = await res.json().catch(() => ({}));
           if (data.clientIp) setDetectedClientIp(data.clientIp);
+          setIsEntryChecking(false);
 
           if (res.ok && data.authenticated) {
             const tokenToStore = data.sessionToken || candidate;
@@ -3293,7 +3284,7 @@
               setIsIpBanned(true);
               setBanRemainingSec(Number(data.banRemainingSeconds) || 600);
               setRemainingAttempts(0);
-            } else if (typeof data.remainingAttempts === number) {
+            } else if (typeof data.remainingAttempts === "number") {
               setRemainingAttempts(data.remainingAttempts);
             }
             setEntryErrorMsg(
@@ -3302,7 +3293,8 @@
             );
           }
         } catch {
-          setEntryErrorMsg("⚠️ 서버와 통신 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+          setIsEntryChecking(false);
+          setEntryErrorMsg("⚠️ 네트워크 통신 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
         }
       };
 
@@ -3542,6 +3534,7 @@
         const timer = setInterval(() => {
           if (
             savedAuthPinRef.current &&
+            isEntryAuthenticated &&
             !isApplyingRemoteRef.current &&
             !saveTimeoutRef.current &&
             !noteDebounceTimerRef.current &&
@@ -3549,7 +3542,7 @@
           ) {
             fetchCloudData(false, savedAuthPinRef.current);
           }
-        }, 3000);
+        }, 8000);
 
         const handleFocusOrVisible = () => {
           if (

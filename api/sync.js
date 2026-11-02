@@ -64,93 +64,22 @@ function normalizeSupabaseBaseUrl(rawUrl) {
 }
 
 let cachedWorkingCreds = null;
+let cachedUpsertFormat = null; // 'primary' | 'fallback'
+let lastSupabaseFetchTime = 0;
+let cachedSupabaseData = null;
+const SUPABASE_CACHE_TTL_MS = 6000; // 6초 인스턴스 캐시 (중복 GET 왕복 제거)
 
 function resolveSupabaseCredentialsList() {
   const env = process.env || {};
-  const urlPriorityKeys = [
-    "EXPO_PUBLIC_COUPLE_SUPABASE_URL",
-    "EXPO_PUBLIC_COUPLE_SUPABASE_URL_",
-    "EXPO_PUBLIC__COUPLE_SUPABASE_URL",
-    "SUPABASE_URL_",
-    "SUPABASE__URL",
-    "_SUPABASE_URL",
-    "EXPO_PUBLIC_SUPABASE_URL_",
-    "EXPO_PUBLIC__SUPABASE_URL",
-    "SUPABASE_URL",
-    "EXPO_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "VITE_SUPABASE_URL",
-  ];
-
-  const keyPriorityKeys = [
-    "EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY",
-    "EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY_",
-    "EXPO_PUBLIC__COUPLE_SUPABASE_ANON_KEY",
-    "SUPABASE_ANON_KEY_",
-    "SUPABASE__ANON_KEY",
-    "_SUPABASE_ANON_KEY",
-    "EXPO_PUBLIC_SUPABASE_ANON_KEY_",
-    "EXPO_PUBLIC__SUPABASE_ANON_KEY",
-    "SUPABASE_ANON_KEY",
-    "EXPO_PUBLIC_SUPABASE_ANON_KEY",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    "VITE_SUPABASE_ANON_KEY",
-  ];
-
-  const urlSet = new Set();
-  const keyList = [];
-  const keySeen = new Set();
-
-  const addKeyCandidate = (rawVal) => {
-    const cleaned = cleanEnvToken(rawVal).replace(/\s+/g, "");
-    if (!cleaned || cleaned.length < 20 || keySeen.has(cleaned)) return;
-    if (/^https?:\/\//i.test(cleaned)) return;
-    const jwtInfo = parseSupabaseAnonJwt(cleaned);
-    keySeen.add(cleaned);
-    keyList.push({
-      key: jwtInfo ? jwtInfo.token : cleaned,
-      refUrl:
-        jwtInfo && jwtInfo.ref ? `https://${jwtInfo.ref.toLowerCase()}.supabase.co` : "",
-      isVerifiedJwt: Boolean(jwtInfo),
-    });
-    if (jwtInfo && jwtInfo.ref) {
-      urlSet.add(`https://${jwtInfo.ref.toLowerCase()}.supabase.co`);
-    }
-  };
-
-  const addUrlCandidate = (rawVal) => {
-    const norm = normalizeSupabaseBaseUrl(rawVal);
-    if (norm && !norm.includes("your-project")) {
-      urlSet.add(norm);
-    }
-  };
-
-  for (const k of keyPriorityKeys) {
-    if (env[k]) addKeyCandidate(env[k]);
-  }
-  for (const k of urlPriorityKeys) {
-    if (env[k]) addUrlCandidate(env[k]);
-  }
-
-  // 전체 process.env 스캔: 변수명에 _가 추가되었거나 URL/키가 다른 이름으로 저장된 경우까지 자동 탐지
-  for (const [envName, envVal] of Object.entries(env)) {
-    if (!envVal || typeof envVal !== "string") continue;
-    if (/SERVICE_ROLE/i.test(envName)) continue;
-    if (/SUPABASE/i.test(envName) || envVal.includes(".supabase.co") || envVal.startsWith("eyJ")) {
-      addKeyCandidate(envVal);
-      addUrlCandidate(envVal);
-    }
-  }
-
-  // 검증된 JWT 키를 최우선 정렬
-  keyList.sort((a, b) => Number(b.isVerifiedJwt) - Number(a.isVerifiedJwt));
-
   const pairs = [];
   const pairSeen = new Set();
 
-  const pushPair = (url, key) => {
+  const pushPair = (rawUrl, rawKey) => {
+    const url = normalizeSupabaseBaseUrl(rawUrl);
+    const key = cleanEnvToken(rawKey).replace(/\s+/g, "");
     if (!url || !key) return;
-    const sig = `${url}|${key}`;
+    if (key.length < 20 || /^https?:\/\//i.test(key)) return;
+    const sig = url + "|" + key;
     if (pairSeen.has(sig)) return;
     pairSeen.add(sig);
     pairs.push({ url, key });
@@ -160,17 +89,33 @@ function resolveSupabaseCredentialsList() {
     pushPair(cachedWorkingCreds.url, cachedWorkingCreds.key);
   }
 
-  // 1순위: JWT 내부 ref와 정확히 일치하는 URL + Key 조합
-  for (const kObj of keyList) {
-    if (kObj.refUrl) {
-      pushPair(kObj.refUrl, kObj.key);
-    }
+  // 1. 직접 지정된 환경변수 우선 로드 (Cartesian product 및 가짜 환경변수 오염 방지)
+  const directPairs = [
+    [env.SUPABASE_URL, env.SUPABASE_ANON_KEY],
+    [env.EXPO_PUBLIC_COUPLE_SUPABASE_URL, env.EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY],
+    [env.EXPO_PUBLIC_SUPABASE_URL, env.EXPO_PUBLIC_SUPABASE_ANON_KEY],
+    [env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY],
+    [env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY],
+    [env.SUPABASE_URL_, env.SUPABASE_ANON_KEY_],
+    [env._SUPABASE_URL, env._SUPABASE_ANON_KEY],
+  ];
+
+  for (const [u, k] of directPairs) {
+    if (u && k) pushPair(u, k);
   }
 
-  // 2순위: 수집된 모든 유효 URL + Key 조합
-  for (const kObj of keyList) {
-    for (const u of urlSet) {
-      pushPair(u, kObj.key);
+  // 2. JWT 내부 ref 분석 조합 (검증된 Supabase JWT 토큰만 허용)
+  const candidateKeys = [
+    env.SUPABASE_ANON_KEY,
+    env.EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY,
+    env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  ].filter(Boolean);
+
+  for (const k of candidateKeys) {
+    const jwt = parseSupabaseAnonJwt(k);
+    if (jwt && jwt.ref) {
+      pushPair("https://" + jwt.ref.toLowerCase() + ".supabase.co", jwt.token);
     }
   }
 
@@ -944,31 +889,29 @@ function extractBestObjectFromRow(row) {
   const candidates = [fromHaeMemo, fromHaeShift, fromMemo].filter(Boolean);
   if (candidates.length === 0) return null;
 
-  // 가장 최신 updatedAt을 가진 객체를 기준으로 하되, securityConfig(초대코드·비밀번호)는 병합 보존
+  // 가장 최신 updatedAt을 가진 객체를 단일 신뢰 소스(Single Source of Truth)로 선택
   candidates.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
   const best = { ...candidates[0] };
 
-  for (const c of candidates) {
-    if (c.securityConfig && typeof c.securityConfig === "object") {
-      best.securityConfig = {
-        ...(best.securityConfig || {}),
-        ...c.securityConfig,
-        accessEntries: [
-          ...(Array.isArray(best.securityConfig?.accessEntries)
-            ? best.securityConfig.accessEntries
-            : []),
-          ...(Array.isArray(c.securityConfig?.accessEntries)
-            ? c.securityConfig.accessEntries
-            : []),
-        ],
-      };
+  // candidates[0]에 securityConfig가 없으면 다른 컬럼에서 보충하되, 이전 오래된 컬럼으로 덮어쓰지 않음
+  if (!best.securityConfig || typeof best.securityConfig !== "object") {
+    for (const c of candidates) {
+      if (c.securityConfig && typeof c.securityConfig === "object") {
+        best.securityConfig = { ...c.securityConfig };
+        break;
+      }
     }
   }
 
   return best;
 }
 
-async function fetchFromSupabase() {
+async function fetchFromSupabase(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedSupabaseData && now - lastSupabaseFetchTime < SUPABASE_CACHE_TTL_MS) {
+    return cachedSupabaseData;
+  }
+
   const credPairs = resolveSupabaseCredentialsList();
   if (credPairs.length === 0) {
     throw new Error("No valid Supabase credentials found in environment");
@@ -981,7 +924,7 @@ async function fetchFromSupabase() {
     )}&select=*`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4500);
+    const timer = setTimeout(() => controller.abort(), 2500);
 
     try {
       const res = await fetch(endpoint, {
@@ -999,10 +942,15 @@ async function fetchFromSupabase() {
       cachedWorkingCreds = cred;
 
       if (!Array.isArray(rows) || rows.length === 0) {
+        lastSupabaseFetchTime = Date.now();
+        cachedSupabaseData = null;
         return null;
       }
 
-      return extractBestObjectFromRow(rows[0]);
+      const result = extractBestObjectFromRow(rows[0]);
+      cachedSupabaseData = result;
+      lastSupabaseFetchTime = Date.now();
+      return result;
     } catch (err) {
       lastErr = err;
     } finally {
@@ -1027,7 +975,7 @@ async function saveToSupabase(payload) {
 
     const attemptUpsert = async (rowBody) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4500);
+      const timer = setTimeout(() => controller.abort(), 2800);
       try {
         const res = await fetch(endpoint, {
           method: "POST",
@@ -1044,30 +992,41 @@ async function saveToSupabase(payload) {
     };
 
     try {
-      // 1차: 기존 호환 형식 (hae_shift + hae_memo 동시 기록)
-      const okPrimary = await attemptUpsert({
-        date: SYNC_ROW_KEY,
-        memo: "",
-        hae_shift: payload,
-        hae_memo: jsonStr,
-      }).catch(() => false);
+      // 검증된 포맷 우선 시도 (이전 성공 기록이 있으면 1회 왕복만으로 즉시 저장 성공)
+      const formats = cachedUpsertFormat === "fallback" ? ["fallback", "primary"] : ["primary", "fallback"];
 
-      if (okPrimary) {
-        cachedWorkingCreds = cred;
-        return true;
-      }
+      for (const fmt of formats) {
+        if (fmt === "primary") {
+          const okPrimary = await attemptUpsert({
+            date: SYNC_ROW_KEY,
+            memo: "",
+            hae_shift: payload,
+            hae_memo: jsonStr,
+          }).catch(() => false);
 
-      // 2차 폴백: hae_shift 컬럼이 TEXT 타입인 경우 객체 전달 시 400 에러가 날 수 있으므로 null + JSON 문자열로 안전 저장
-      const okFallback = await attemptUpsert({
-        date: SYNC_ROW_KEY,
-        memo: jsonStr,
-        hae_shift: null,
-        hae_memo: jsonStr,
-      }).catch(() => false);
+          if (okPrimary) {
+            cachedWorkingCreds = cred;
+            cachedUpsertFormat = "primary";
+            cachedSupabaseData = payload;
+            lastSupabaseFetchTime = Date.now();
+            return true;
+          }
+        } else {
+          const okFallback = await attemptUpsert({
+            date: SYNC_ROW_KEY,
+            memo: jsonStr,
+            hae_shift: null,
+            hae_memo: jsonStr,
+          }).catch(() => false);
 
-      if (okFallback) {
-        cachedWorkingCreds = cred;
-        return true;
+          if (okFallback) {
+            cachedWorkingCreds = cred;
+            cachedUpsertFormat = "fallback";
+            cachedSupabaseData = payload;
+            lastSupabaseFetchTime = Date.now();
+            return true;
+          }
+        }
       }
     } catch (err) {
       lastErr = err;
@@ -1103,10 +1062,13 @@ async function persistSecurityConfigOnly(existingData, securityConfig) {
   };
 
   memoryFallback = payload;
+  cachedSupabaseData = payload;
+  lastSupabaseFetchTime = Date.now();
+
   try {
-    await saveToSupabase(payload);
+    return await saveToSupabase(payload);
   } catch {
-    // 메모리 캐시에 이미 유지됨
+    return false;
   }
 }
 
@@ -1366,7 +1328,13 @@ module.exports = async function handler(req, res) {
             ];
           }
 
-          await persistSecurityConfigOnly(existing, securityConfig);
+          const ok = await persistSecurityConfigOnly(existing, securityConfig);
+          if (!ok) {
+            return res.status(500).json({
+              ok: false,
+              error: "클라우드 데이터베이스에 새 비밀번호를 저장하지 못했습니다. 잠시 후 다시 시도해주세요.",
+            });
+          }
           return res.status(200).json({
             ok: true,
             message:
@@ -1395,7 +1363,13 @@ module.exports = async function handler(req, res) {
             maskedHint: maskPasswordHint(newAdminPw),
           };
 
-          await persistSecurityConfigOnly(existing, securityConfig);
+          const ok = await persistSecurityConfigOnly(existing, securityConfig);
+          if (!ok) {
+            return res.status(500).json({
+              ok: false,
+              error: "클라우드 데이터베이스에 관리자 비밀번호를 저장하지 못했습니다. 잠시 후 다시 시도해주세요.",
+            });
+          }
           return res.status(200).json({
             ok: true,
             message: "👑 관리자 비밀번호가 성공적으로 변경되었습니다. (기본 0000 비활성화)",
@@ -1415,7 +1389,13 @@ module.exports = async function handler(req, res) {
           securityConfig.accessEntries = currentList.filter((e) => e.id !== entryId);
           const delSet = new Set([...(securityConfig.deletedPasswordIds || []), entryId]);
           securityConfig.deletedPasswordIds = Array.from(delSet).slice(0, 200);
-          await persistSecurityConfigOnly(existing, securityConfig);
+          const ok = await persistSecurityConfigOnly(existing, securityConfig);
+          if (!ok) {
+            return res.status(500).json({
+              ok: false,
+              error: "비밀번호 삭제를 클라우드에 반영하지 못했습니다. 잠시 후 다시 시도해주세요.",
+            });
+          }
           return res.status(200).json({
             ok: true,
             message: "🗑️ 선택한 비밀번호가 삭제되었습니다.",
@@ -1465,7 +1445,6 @@ module.exports = async function handler(req, res) {
         // 1) 관리자 비밀번호 검증 (커스텀 설정 또는 기본 0000)
         if (verifyAdminMasterKey(providedPin, securityConfig)) {
           resetIpFailure(clientIp, securityConfig);
-          await persistSecurityConfigOnly(existing, securityConfig);
           return res.status(200).json({
             ok: true,
             authenticated: true,
@@ -1479,7 +1458,6 @@ module.exports = async function handler(req, res) {
         // 2) 일반 접속 비밀번호 일치 확인
         if (verifyAccessPassword(providedPin, securityConfig)) {
           resetIpFailure(clientIp, securityConfig);
-          await persistSecurityConfigOnly(existing, securityConfig);
           return res.status(200).json({
             ok: true,
             authenticated: true,
@@ -1492,7 +1470,6 @@ module.exports = async function handler(req, res) {
 
         // 3) 모두 불일치 → 실패 횟수 증가 및 5회 도달 시 10분 일시 잠금
         const updatedIp = registerIpFailure(clientIp, securityConfig);
-        await persistSecurityConfigOnly(existing, securityConfig);
 
         if (updatedIp.banned) {
           return res.status(403).json({
