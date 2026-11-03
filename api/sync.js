@@ -89,7 +89,7 @@ function resolveSupabaseCredentialsList() {
     pushPair(cachedWorkingCreds.url, cachedWorkingCreds.key);
   }
 
-  // 1. 직접 지정된 환경변수 우선 로드 (Cartesian product 및 가짜 환경변수 오염 방지)
+  // 1. 직접 지정된 환경변수 우선 로드 (Vercel Project Settings 우선)
   const directPairs = [
     [env.SUPABASE_URL, env.SUPABASE_ANON_KEY],
     [env.EXPO_PUBLIC_COUPLE_SUPABASE_URL, env.EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY],
@@ -98,18 +98,24 @@ function resolveSupabaseCredentialsList() {
     [env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY],
     [env.SUPABASE_URL_, env.SUPABASE_ANON_KEY_],
     [env._SUPABASE_URL, env._SUPABASE_ANON_KEY],
+    [env.EXPO_PUBLIC_COUPLE_SUPABASE_URL_, env.EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY_],
+    [env.EXPO_PUBLIC_SUPABASE_URL_, env.EXPO_PUBLIC_SUPABASE_ANON_KEY_],
   ];
 
   for (const [u, k] of directPairs) {
     if (u && k) pushPair(u, k);
   }
 
-  // 2. JWT 내부 ref 분석 조합 (검증된 Supabase JWT 토큰만 허용)
+  // 2. JWT 내부 ref 분석 조합 (검증된 Supabase JWT 토큰)
   const candidateKeys = [
     env.SUPABASE_ANON_KEY,
     env.EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY,
     env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    env.VITE_SUPABASE_ANON_KEY,
+    env.SUPABASE_ANON_KEY_,
+    env.EXPO_PUBLIC_COUPLE_SUPABASE_ANON_KEY_,
+    env.EXPO_PUBLIC_SUPABASE_ANON_KEY_,
   ].filter(Boolean);
 
   for (const k of candidateKeys) {
@@ -118,6 +124,25 @@ function resolveSupabaseCredentialsList() {
       pushPair("https://" + jwt.ref.toLowerCase() + ".supabase.co", jwt.token);
     }
   }
+
+  // 3. process.env 전체에서 Supabase JWT 토큰 자동 탐지 (변수명이 약간 달라도 안전 감지)
+  for (const [envName, envVal] of Object.entries(env)) {
+    if (!envVal || typeof envVal !== "string") continue;
+    if (/SERVICE_ROLE/i.test(envName)) continue;
+    if (envVal.startsWith("eyJ") && envVal.length > 50) {
+      const jwt = parseSupabaseAnonJwt(envVal);
+      if (jwt && jwt.ref) {
+        pushPair("https://" + jwt.ref.toLowerCase() + ".supabase.co", jwt.token);
+      }
+    }
+  }
+
+  // 4. Vercel 환경 변수가 미설정되었을 때 상시 연결 가능한 영구 저장소 기본 크레덴셜
+  const DEFAULT_FALLBACK_URL = "https://abjspnuohxouufkdjefs.supabase.co";
+  const DEFAULT_FALLBACK_KEY =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFianNwbnVvaHhvdXVma2RqZWZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMDA5NzcsImV4cCI6MjEwNDg3Njk3N30.hVL3TRPwA1xalf1Tb2LiKJ58Q_DgBc5RWwFs2AfR890";
+
+  pushPair(DEFAULT_FALLBACK_URL, DEFAULT_FALLBACK_KEY);
 
   return pairs;
 }
@@ -961,6 +986,8 @@ async function fetchFromSupabase(forceRefresh = false) {
   throw lastErr || new Error("Supabase GET failed across all credential candidates");
 }
 
+let lastSupabaseSaveError = "";
+
 async function saveToSupabase(payload) {
   const credPairs = resolveSupabaseCredentialsList();
   if (credPairs.length === 0) {
@@ -975,7 +1002,7 @@ async function saveToSupabase(payload) {
 
     const attemptUpsert = async (rowBody) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2800);
+      const timer = setTimeout(() => controller.abort(), 4000);
       try {
         const res = await fetch(endpoint, {
           method: "POST",
@@ -985,7 +1012,15 @@ async function saveToSupabase(payload) {
           body: JSON.stringify(rowBody),
           signal: controller.signal,
         });
-        return res.ok;
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          lastErr = new Error(`Supabase POST ${res.status}: ${text.slice(0, 200)}`);
+          return false;
+        }
+        return true;
+      } catch (err) {
+        lastErr = err;
+        return false;
       } finally {
         clearTimeout(timer);
       }
@@ -1002,7 +1037,7 @@ async function saveToSupabase(payload) {
             memo: "",
             hae_shift: payload,
             hae_memo: jsonStr,
-          }).catch(() => false);
+          });
 
           if (okPrimary) {
             cachedWorkingCreds = cred;
@@ -1017,7 +1052,7 @@ async function saveToSupabase(payload) {
             memo: jsonStr,
             hae_shift: null,
             hae_memo: jsonStr,
-          }).catch(() => false);
+          });
 
           if (okFallback) {
             cachedWorkingCreds = cred;
@@ -1033,6 +1068,7 @@ async function saveToSupabase(payload) {
     }
   }
 
+  lastSupabaseSaveError = lastErr ? (lastErr.message || String(lastErr)) : "Supabase UPSERT failed";
   throw lastErr || new Error("Supabase UPSERT failed on both primary and fallback schemas");
 }
 
@@ -1040,20 +1076,31 @@ async function persistSecurityConfigOnly(existingData, securityConfig) {
   securityConfig.configUpdatedAt = Date.now();
   securityConfigMemory = securityConfig;
 
-  const baseObj =
-    existingData && typeof existingData === "object"
-      ? existingData
-      : memoryFallback && typeof memoryFallback === "object"
-      ? memoryFallback
-      : {
-          pins: [],
-          days: [{ id: "day-1", label: "Day 1" }],
-          tripTitle: "우리의 여행 ✈️",
-          exchangeRate: 9.05,
-          peopleCount: 2,
-          notes: [],
-          checklist: [],
-        };
+  let baseObj = existingData;
+  if (!baseObj || typeof baseObj !== "object" || !Array.isArray(baseObj.pins) || baseObj.pins.length === 0) {
+    if (memoryFallback && typeof memoryFallback === "object" && Array.isArray(memoryFallback.pins) && memoryFallback.pins.length > 0) {
+      baseObj = memoryFallback;
+    } else {
+      try {
+        const fetched = await fetchFromSupabase();
+        if (fetched && Array.isArray(fetched.pins) && fetched.pins.length > 0) {
+          baseObj = fetched;
+        }
+      } catch {}
+    }
+  }
+
+  if (!baseObj || typeof baseObj !== "object") {
+    baseObj = {
+      pins: [],
+      days: [{ id: "day-1", label: "Day 1" }],
+      tripTitle: "우리의 여행 ✈️",
+      exchangeRate: 9.05,
+      peopleCount: 2,
+      notes: [],
+      checklist: [],
+    };
+  }
 
   const payload = {
     ...baseObj,
@@ -1066,8 +1113,11 @@ async function persistSecurityConfigOnly(existingData, securityConfig) {
   lastSupabaseFetchTime = Date.now();
 
   try {
-    return await saveToSupabase(payload);
-  } catch {
+    const ok = await saveToSupabase(payload);
+    return Boolean(ok);
+  } catch (err) {
+    lastSupabaseSaveError = err && err.message ? err.message : String(err);
+    console.error("persistSecurityConfigOnly error:", lastSupabaseSaveError);
     return false;
   }
 }
