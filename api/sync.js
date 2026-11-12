@@ -1598,6 +1598,21 @@ module.exports = async function handler(req, res) {
       const existingNotes = existing && Array.isArray(existing.notes) ? existing.notes : [];
       const existingChecklist = existing && Array.isArray(existing.checklist) ? existing.checklist : [];
 
+      const isSyncV5 = body.syncProtocol === "v5";
+
+      // 🛡️ 구버전(v5 이전) 미새로고침 기기(예: 백그라운드에 열려 있던 구버전 모바일 탭)가
+      // applyRemotePayload의 구버전 합집합 버그로 인해 정리된 일정을 다시 100개로 덮어쓰는 현상 원천 차단
+      if (
+        !isSyncV5 &&
+        existingPins.length >= 10 &&
+        incomingPins.length >= existingPins.length + 10
+      ) {
+        body.pins = existingPins;
+        if (existingDays.length > 0) {
+          body.days = existingDays;
+        }
+      }
+
       if (!isExplicitReset && !isForceOverwrite) {
         // 1) 핀(pins) 방어: 들어오는 핀이 비어 있고 기존에 핀이 있으면 기존 핀 유지
         if (incomingPins.length === 0 && existingPins.length > 0) {

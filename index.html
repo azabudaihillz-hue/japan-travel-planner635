@@ -984,6 +984,7 @@
     const STORAGE_KEY_MASTER_V6 = "japan_trip_v6_master_local";
     const STORAGE_KEY_SECURITY_SNAPSHOT = "travel_planner_security_vault_v1";
     const STORAGE_KEY_AUTH_PIN = "travel_planner_auth_pin_v1";
+    const STORAGE_KEY_UPDATED_AT = "travel_planner_master_updated_at";
 
     // 🛡️ 보안 패치: 프론트엔드에 DB 접속 키를 일절 포함하지 않고 /api/sync 보안 게이트웨이를 통해서만 통신
     const CLIENT_ID = "device-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now();
@@ -1699,8 +1700,21 @@
 
       const isInitialCloudLoadedRef = useRef(false);
       const isApplyingRemoteRef = useRef(false);
+      const isPushingCloudRef = useRef(false);
       const explicitlyClearedRef = useRef(false);
-      const lastUpdatedAtRef = useRef(0);
+      const lastUpdatedAtRef = useRef(
+        () => Number(localStorage.getItem(STORAGE_KEY_UPDATED_AT)) || 0
+      );
+      if (typeof lastUpdatedAtRef.current === "function") {
+        lastUpdatedAtRef.current = lastUpdatedAtRef.current();
+      }
+      const updateLastTimestamp = (ts) => {
+        const validTs = Math.max(Number(lastUpdatedAtRef.current) || 0, Number(ts) || Date.now());
+        lastUpdatedAtRef.current = validTs;
+        try {
+          localStorage.setItem(STORAGE_KEY_UPDATED_AT, String(validTs));
+        } catch {}
+      };
       const saveTimeoutRef = useRef(null);
       const latestStateRef = useRef({
         pins,
@@ -1794,9 +1808,10 @@
         nextLat: 0,
         nextLng: 0
       });
-      // 🏨/✈️ Day 시작/종료 빠른 설정 셀렉트 상태
+      // 🏨/✈️ Day 시작/종료 빠른 설정 셀렉트 상태 및 접기/펼치기 상태 (모바일 화면 가림 방지용 기본 접힘)
       const [quickStartFacilityKey, setQuickStartFacilityKey] = useState("");
       const [quickEndFacilityKey, setQuickEndFacilityKey] = useState("");
+      const [isFacilityQuickBarOpen, setIsFacilityQuickBarOpen] = useState(false);
 
       // 🔢 각 핀의 전체 순번(globalOrder), Day 내부 순번(dayOrder 1,2,3...), 현재 모드 표시 순번(displayOrder), 시설 타입 계산
       const pinOrderInfoMap = useMemo(() => {
@@ -2502,6 +2517,10 @@
       const savedAuthPinRef = useRef(savedAuthPin);
 
       const [isEntryAuthenticated, setIsEntryAuthenticated] = useState(false);
+      const isEntryAuthenticatedRef = useRef(false);
+      useEffect(() => {
+        isEntryAuthenticatedRef.current = isEntryAuthenticated;
+      }, [isEntryAuthenticated]);
       const [isEntryChecking, setIsEntryChecking] = useState(() =>
         Boolean(localStorage.getItem(STORAGE_KEY_AUTH_PIN))
       );
@@ -2722,9 +2741,21 @@
       const applyRemotePayload = (remote, isManual = false) => {
         if (!remote || typeof remote !== "object") return false;
 
+        // 로컬에서 클라우드 저장이 진행 중이거나 디바운스 대기 중일 때는 백그라운드 폴링 적용 보류
+        if (
+          !isManual &&
+          (isPushingCloudRef.current ||
+            saveTimeoutRef.current ||
+            pinPushDebounceTimerRef.current ||
+            noteDebounceTimerRef.current)
+        ) {
+          return false;
+        }
+
         const remoteUpdatedAt = Number(remote.updatedAt || 0);
         if (
           !isManual &&
+          isInitialCloudLoadedRef.current &&
           remoteUpdatedAt > 0 &&
           lastUpdatedAtRef.current > 0 &&
           remoteUpdatedAt <= lastUpdatedAtRef.current
@@ -2745,9 +2776,10 @@
         }
 
         isApplyingRemoteRef.current = true;
-        lastUpdatedAtRef.current = remoteUpdatedAt || Date.now();
+        updateLastTimestamp(remoteUpdatedAt || Date.now());
 
-        // 1) 핀(pins) 방어: 원격이 비어 있고 로컬에 의미 있는 핀이 있으면 로컬 삭제 금지 및 복구 푸시
+        // 1) 핀(pins) 동기화: 원격이 완전히 비어 있고 로컬에 핀이 있을 때만 로컬 복구 푸시,
+        // 원격에 유효한 핀 목록(예: 정리된 35개 코스)이 있으면 구버전 로컬(100개)과 재병합하지 않고 원격을 단일 신뢰 소스로 즉시 적용
         if (Array.isArray(remote.pins)) {
           if (
             remotePins.length === 0 &&
@@ -2757,24 +2789,10 @@
           ) {
             pushCloudData({ ...currentLocal, forceOverwrite: true }, true);
           } else {
-            // 원격에 핀이 있는 경우: 방금 추가된 로컬 핀이 아직 서버에 없다면 스마트 병합 후 재push
-            const localPins = Array.isArray(currentLocal.pins) ? currentLocal.pins : [];
-            const localOnlyPins = localPins.filter(
-              (lp) => !remotePins.some((rp) => String(rp.id) === String(lp.id))
-            );
-            if (localOnlyPins.length > 0 && !remote.explicitlyCleared) {
-              const mergedPins = [...remotePins, ...localOnlyPins];
-              setPins(mergedPins);
-              try {
-                localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(mergedPins));
-              } catch {}
-              pushCloudData({ ...currentLocal, pins: mergedPins, forceOverwrite: true }, false);
-            } else {
-              setPins(remotePins);
-              try {
-                localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(remotePins));
-              } catch {}
-            }
+            setPins(remotePins);
+            try {
+              localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(remotePins));
+            } catch {}
             if (remotePins.length > 0) {
               setSelectedPinId((prevId) =>
                 remotePins.some((p) => p.id === prevId) ? prevId : remotePins[0].id
@@ -3017,10 +3035,11 @@
             return true;
           }
 
+          isPushingCloudRef.current = true;
           setSyncStatus("saving");
           setNoteSaveStatus("saving");
           const nowTs = Date.now();
-          lastUpdatedAtRef.current = nowTs;
+          updateLastTimestamp(nowTs);
 
           const payload = {
             pins: pinsList,
@@ -3032,6 +3051,7 @@
             checklist: Array.isArray(base.checklist) ? base.checklist.slice(0, 200) : [],
             explicitlyCleared: Boolean(explicitlyClearedRef.current || base.explicitlyCleared),
             forceOverwrite: Boolean(isForce || base.forceOverwrite),
+            syncProtocol: "v5",
             updatedAt: nowTs,
             clientId: CLIENT_ID,
             authPin: activePin
@@ -3087,6 +3107,9 @@
           }
 
           if (res.ok) {
+            if (resJson && resJson.updatedAt) {
+              updateLastTimestamp(resJson.updatedAt);
+            }
             setLastSyncedTime(
               new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
             );
@@ -3123,6 +3146,9 @@
           }, 4500);
           return false;
         } finally {
+          if (reqSeq === pushSeqRef.current) {
+            isPushingCloudRef.current = false;
+          }
           clearTimeout(timeoutId);
         }
       };
@@ -3534,9 +3560,11 @@
         const timer = setInterval(() => {
           if (
             savedAuthPinRef.current &&
-            isEntryAuthenticated &&
+            isEntryAuthenticatedRef.current &&
             !isApplyingRemoteRef.current &&
+            !isPushingCloudRef.current &&
             !saveTimeoutRef.current &&
+            !pinPushDebounceTimerRef.current &&
             !noteDebounceTimerRef.current &&
             document.visibilityState === "visible"
           ) {
@@ -3547,9 +3575,12 @@
         const handleFocusOrVisible = () => {
           if (
             savedAuthPinRef.current &&
+            isEntryAuthenticatedRef.current &&
             document.visibilityState === "visible" &&
             !isApplyingRemoteRef.current &&
+            !isPushingCloudRef.current &&
             !saveTimeoutRef.current &&
+            !pinPushDebounceTimerRef.current &&
             !noteDebounceTimerRef.current
           ) {
             fetchCloudData(false, savedAuthPinRef.current);
@@ -4732,27 +4763,100 @@
           showToast("⚠️ 1MB 이하의 정상 백업 JSON 파일만 불러올 수 있습니다.");
           return;
         }
+        // 파일 선택창 닫힘 직후 발생하는 window focus 폴링이 방금 불러올 데이터를 덮어쓰지 못하도록 선점 잠금
+        isPushingCloudRef.current = true;
+        updateLastTimestamp(Date.now() + 3000);
+
         const reader = new FileReader();
         reader.readAsText(file, "UTF-8");
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           try {
             const parsed = JSON.parse(ev.target.result);
             if (parsed && Array.isArray(parsed.pins)) {
               const safePins = sanitizePinList(parsed.pins);
+
+              // 일차(days) 추출: JSON에 days가 있으면 사용하고, 없으면 불러온 핀 목록의 dayId/dayLabel에서 자동 구성
+              let nextDays = days;
+              if (Array.isArray(parsed.days) && parsed.days.length > 0) {
+                nextDays = parsed.days
+                  .filter((d) => d && d.id)
+                  .map((d) => ({ id: String(d.id), label: String(d.label || d.id) }));
+              } else if (safePins.length > 0) {
+                const dayMap = new Map();
+                safePins.forEach((p) => {
+                  const dId = p.dayId || "day-1";
+                  const dLabel = p.dayLabel || "Day 1";
+                  if (!dayMap.has(dId)) dayMap.set(dId, dLabel);
+                });
+                if (dayMap.size > 0) {
+                  nextDays = Array.from(dayMap.entries()).map(([id, label]) => ({ id, label }));
+                }
+              }
+
+              const nextTitle = parsed.tripTitle
+                ? cleanSafeText(parsed.tripTitle, 80, "우리의 여행 플래너 ✈️")
+                : tripTitle;
+              const nextRate = parsed.exchangeRate
+                ? Math.max(0.5, Math.min(100, Number(parsed.exchangeRate) || 9.05))
+                : exchangeRate;
+              const nextPeople = parsed.peopleCount
+                ? Math.max(1, Math.min(50, Math.round(Number(parsed.peopleCount) || 2)))
+                : peopleCount;
+              const nextNotes = Array.isArray(parsed.notes) ? parsed.notes.slice(0, 30) : notes;
+              const nextChecklist = Array.isArray(parsed.checklist)
+                ? parsed.checklist.slice(0, 200)
+                : checklist;
+
+              if (saveTimeoutRef.current) {
+                clearTimeout(saveTimeoutRef.current);
+                saveTimeoutRef.current = null;
+              }
+              if (pinPushDebounceTimerRef.current) {
+                clearTimeout(pinPushDebounceTimerRef.current);
+                pinPushDebounceTimerRef.current = null;
+              }
+
               setPins(safePins);
-              if (parsed.tripTitle) {
-                setTripTitle(cleanSafeText(parsed.tripTitle, 80, "우리의 여행 플래너 ✈️"));
-              }
-              if (parsed.exchangeRate) {
-                setExchangeRate(Math.max(0.5, Math.min(100, Number(parsed.exchangeRate) || 9.05)));
-              }
-              if (Array.isArray(parsed.notes)) setNotes(parsed.notes.slice(0, 30));
-              if (Array.isArray(parsed.checklist)) setChecklist(parsed.checklist.slice(0, 200));
+              setDays(nextDays);
+              setTripTitle(nextTitle);
+              setExchangeRate(nextRate);
+              setPeopleCount(nextPeople);
+              setNotes(nextNotes);
+              setChecklist(nextChecklist);
               if (safePins[0]) setSelectedPinId(safePins[0].id);
-              showToast("📂 여행 계획을 안전하게 검증하여 불러왔습니다!");
+
+              const importedState = {
+                pins: safePins,
+                days: nextDays,
+                tripTitle: nextTitle,
+                exchangeRate: nextRate,
+                peopleCount: nextPeople,
+                notes: nextNotes,
+                checklist: nextChecklist
+              };
+              latestStateRef.current = importedState;
+
+              try {
+                localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(safePins));
+                localStorage.setItem(STORAGE_KEY_DAYS, JSON.stringify(nextDays));
+                localStorage.setItem(STORAGE_KEY_TITLE, nextTitle);
+                localStorage.setItem(STORAGE_KEY_RATE, String(nextRate));
+                localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(nextNotes));
+                localStorage.setItem(STORAGE_KEY_CHECKLIST, JSON.stringify(nextChecklist));
+              } catch {}
+
+              setShowResetModal(false);
+              await pushCloudData({ ...importedState, forceOverwrite: true }, true);
+              showToast(`📂 ${safePins.length}곳의 여행 코스를 불러와 클라우드에 즉시 동기화했습니다!`);
+            } else {
+              isPushingCloudRef.current = false;
+              showToast("⚠️ 유효한 여행 핀(pins) 데이터가 없는 JSON 파일입니다.");
             }
           } catch {
+            isPushingCloudRef.current = false;
             showToast("⚠️ 올바른 JSON 파일이 아닙니다.");
+          } finally {
+            if (e.target) e.target.value = "";
           }
         };
       };
@@ -6209,28 +6313,35 @@
                     </button>
                   </div>
 
-                  {/* 🏨/✈️ 숙소·공항 시작/종료 빠른 설정 + 일괄 적용 바 (Requirement 4) */}
+                  {/* 🏨/✈️ 숙소·공항 시작/종료 빠른 설정 + 일괄 적용 바 (접기/펼치기 지원으로 모바일 시야 확보) */}
                   <div className="pt-1.5 border-t border-slate-200/70 space-y-1.5">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-[11px] font-extrabold text-slate-700 flex items-center gap-1">
-                        <span>🏨✈️ 숙소·공항 빠른 거점 배치</span>
+                    <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setIsFacilityQuickBarOpen((prev) => !prev)}
+                        className="text-[11px] font-extrabold text-slate-700 flex items-center gap-1.5 hover:text-indigo-600 transition text-left py-0.5"
+                      >
+                        <span>🏨✈️ 숙소·공항 거점 배치</span>
                         <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-full">
                           풀 {hotelAirportPool.length}곳
                         </span>
-                      </span>
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 border border-slate-200/80 text-[10px] font-extrabold inline-flex items-center gap-0.5 transition">
+                          {isFacilityQuickBarOpen ? "▲ 접기" : "▼ 시작·종료 펼치기"}
+                        </span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
                           setCustomCategory("🏨 숙소·호텔");
                           setShowAddModal(true);
                         }}
-                        className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-extrabold transition"
+                        className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-extrabold transition shrink-0"
                       >
-                        ＋ 숙소·공항 추가 등록
+                        ＋ 숙소·공항 추가
                       </button>
                     </div>
 
-                    {hotelAirportPool.length === 0 ? (
+                    {isFacilityQuickBarOpen && (hotelAirportPool.length === 0 ? (
                       <div className="text-[11px] text-slate-500 bg-slate-50/80 border border-slate-200/70 rounded-xl px-2.5 py-1.5">
                         등록된 숙소(🏨)나 공항(✈️)이 없습니다. <b>[＋ 숙소·공항 추가 등록]</b>으로 여러 숙소·공항을 등록해두면 각 Day 시작/종료나 코스 중간에 언제든 넣을 수 있습니다.
                       </div>
@@ -6336,7 +6447,7 @@
                           </div>
                         </div>
                       </div>
-                    )}
+                    ))}
                   </div>
 
                   {/* 📋 현재 필터/Day 일정 텍스트 원터치 복사 바 */}
