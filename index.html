@@ -1709,7 +1709,8 @@
         lastUpdatedAtRef.current = lastUpdatedAtRef.current();
       }
       const updateLastTimestamp = (ts) => {
-        const validTs = Math.max(Number(lastUpdatedAtRef.current) || 0, Number(ts) || Date.now());
+        const validTs = Number(ts) || 0;
+        if (validTs <= 0) return;
         lastUpdatedAtRef.current = validTs;
         try {
           localStorage.setItem(STORAGE_KEY_UPDATED_AT, String(validTs));
@@ -2752,20 +2753,22 @@
           return false;
         }
 
+        const currentLocal = latestStateRef.current;
+        const remotePins = sanitizePinList(remote.pins);
+        const localPinsCount = Array.isArray(currentLocal.pins) ? currentLocal.pins.length : 0;
+
         const remoteUpdatedAt = Number(remote.updatedAt || 0);
         if (
           !isManual &&
           isInitialCloudLoadedRef.current &&
           remoteUpdatedAt > 0 &&
           lastUpdatedAtRef.current > 0 &&
-          remoteUpdatedAt <= lastUpdatedAtRef.current
+          remoteUpdatedAt === lastUpdatedAtRef.current &&
+          remotePins.length === localPinsCount
         ) {
           setSyncStatus("synced");
           return false;
         }
-
-        const currentLocal = latestStateRef.current;
-        const remotePins = sanitizePinList(remote.pins);
 
         if (
           Array.isArray(currentLocal.pins) &&
@@ -2776,7 +2779,9 @@
         }
 
         isApplyingRemoteRef.current = true;
-        updateLastTimestamp(remoteUpdatedAt || Date.now());
+        if (remoteUpdatedAt > 0) {
+          updateLastTimestamp(remoteUpdatedAt);
+        }
 
         // 1) 핀(pins) 동기화: 원격이 완전히 비어 있고 로컬에 핀이 있을 때만 로컬 복구 푸시,
         // 원격에 유효한 핀 목록(예: 정리된 35개 코스)이 있으면 구버전 로컬(100개)과 재병합하지 않고 원격을 단일 신뢰 소스로 즉시 적용
@@ -2790,6 +2795,7 @@
             pushCloudData({ ...currentLocal, forceOverwrite: true }, true);
           } else {
             setPins(remotePins);
+            latestStateRef.current = { ...latestStateRef.current, pins: remotePins };
             try {
               localStorage.setItem(STORAGE_KEY_PINS, JSON.stringify(remotePins));
             } catch {}
@@ -2811,6 +2817,7 @@
             }));
           if (remoteDays.length > 0) {
             setDays(remoteDays);
+            latestStateRef.current = { ...latestStateRef.current, days: remoteDays };
           }
         } else if (remotePins.length > 0) {
           const map = new Map();
@@ -2820,7 +2827,9 @@
             if (!map.has(id)) map.set(id, label);
           });
           if (map.size > 0) {
-            setDays(Array.from(map.entries()).map(([id, label]) => ({ id, label })));
+            const derivedDays = Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+            setDays(derivedDays);
+            latestStateRef.current = { ...latestStateRef.current, days: derivedDays };
           }
         }
 
@@ -2844,7 +2853,7 @@
             !hasMeaningfulNotes(remote.notes) &&
             !remote.explicitlyCleared
           ) {
-            pushCloudData({ ...currentLocal, notes: mergedNotes, forceOverwrite: true }, true);
+            pushCloudData({ ...latestStateRef.current, pins: remotePins, notes: mergedNotes, forceOverwrite: true }, true);
           }
         }
 
@@ -2858,7 +2867,7 @@
             !hasMeaningfulChecklist(remote.checklist) &&
             !remote.explicitlyCleared
           ) {
-            pushCloudData({ ...currentLocal, checklist: mergedChecklist, forceOverwrite: true }, true);
+            pushCloudData({ ...latestStateRef.current, pins: remotePins, checklist: mergedChecklist, forceOverwrite: true }, true);
           }
         }
 
@@ -2960,11 +2969,6 @@
 
           const remote = json && json.data ? json.data : json;
           if (remote && !remote.empty) {
-            if (remote.clientId && remote.clientId === CLIENT_ID && !isManual) {
-              setSyncStatus("synced");
-              isInitialCloudLoadedRef.current = true;
-              return;
-            }
             applyRemotePayload(remote, isManual);
             isInitialCloudLoadedRef.current = true;
           } else {
@@ -3039,7 +3043,6 @@
           setSyncStatus("saving");
           setNoteSaveStatus("saving");
           const nowTs = Date.now();
-          updateLastTimestamp(nowTs);
 
           const payload = {
             pins: pinsList,
@@ -3080,7 +3083,14 @@
 
           if (reqSeq !== pushSeqRef.current) return true;
 
-          const resJson = await res.json().catch(() => ({}));
+          let resJson = await res.json().catch(() => ({}));
+          if (res.ok && resJson.dbSynced === false && reqSeq === pushSeqRef.current) {
+            await new Promise((r) => setTimeout(r, 600));
+            if (reqSeq === pushSeqRef.current) {
+              res = await executePost();
+              resJson = await res.json().catch(() => ({}));
+            }
+          }
 
           if (res.status === 401 || res.status === 403) {
             setSyncStatus("offline");
@@ -4765,7 +4775,6 @@
         }
         // 파일 선택창 닫힘 직후 발생하는 window focus 폴링이 방금 불러올 데이터를 덮어쓰지 못하도록 선점 잠금
         isPushingCloudRef.current = true;
-        updateLastTimestamp(Date.now() + 3000);
 
         const reader = new FileReader();
         reader.readAsText(file, "UTF-8");

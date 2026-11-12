@@ -67,7 +67,7 @@ let cachedWorkingCreds = null;
 let cachedUpsertFormat = null; // 'primary' | 'fallback'
 let lastSupabaseFetchTime = 0;
 let cachedSupabaseData = null;
-const SUPABASE_CACHE_TTL_MS = 6000; // 6초 인스턴스 캐시 (중복 GET 왕복 제거)
+const SUPABASE_CACHE_TTL_MS = 0; // 다중 서버리스 인스턴스 간 데이터 불일치(Stale Read) 방지를 위해 항상 실시간 DB 조회
 
 function resolveSupabaseCredentialsList() {
   const env = process.env || {};
@@ -949,7 +949,7 @@ async function fetchFromSupabase(forceRefresh = false) {
     )}&select=*`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
+    const timer = setTimeout(() => controller.abort(), 4000);
 
     try {
       const res = await fetch(endpoint, {
